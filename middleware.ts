@@ -8,10 +8,19 @@ export async function middleware(request: NextRequest) {
     },
   });
 
-  // 1. Inicializar cliente Supabase Serverless
+  // 1. Inicializar cliente Supabase Serverless de forma segura
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  if (!url || !anonKey) {
+    // Se as variáveis de ambiente não estiverem configuradas na Vercel,
+    // permite a requisição seguir para evitar erro 500 geral.
+    return response;
+  }
+
   const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    url,
+    anonKey,
     {
       cookies: {
         getAll() {
