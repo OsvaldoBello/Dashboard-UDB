@@ -1,7 +1,7 @@
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   let response = NextResponse.next({
     request: {
       headers: request.headers,
@@ -44,7 +44,14 @@ export async function middleware(request: NextRequest) {
   );
 
   // 2. Refresh e Validação da Sessão (Session Hardening)
-  const { data: { user } } = await supabase.auth.getUser();
+  let user = null;
+  try {
+    const { data } = await supabase.auth.getUser();
+    user = data.user;
+  } catch (error) {
+    console.error('Erro no middleware Supabase:', error);
+    // Em caso de erro na API do Supabase (ex: chaves inválidas), prossegue sem usuário
+  }
 
   const isDashboard = request.nextUrl.pathname.startsWith('/dashboard');
   const isApiUpload = request.nextUrl.pathname.startsWith('/api/upload');
