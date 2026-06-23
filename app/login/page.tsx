@@ -7,6 +7,17 @@ import { createSupabaseBrowserClient } from '@/lib/supabase-client';
 
 type AuthMode = 'login' | 'register' | 'verify';
 
+// Validador de senha forte
+const validatePassword = (pwd: string) => {
+  return {
+    length: pwd.length >= 8 && pwd.length <= 32,
+    uppercase: /[A-Z]/.test(pwd),
+    lowercase: /[a-z]/.test(pwd),
+    number: /[0-9]/.test(pwd),
+    special: /[!@#$%^&*(),.?":{}|<>]/.test(pwd)
+  };
+};
+
 export default function LoginPage() {
   const [mode, setMode] = useState<AuthMode>('login');
   const [email, setEmail] = useState('');
@@ -19,6 +30,11 @@ export default function LoginPage() {
   
   const router = useRouter();
   const supabase = createSupabaseBrowserClient();
+
+  // Validação em tempo real
+  const pwdCriteria = validatePassword(password);
+  const isPasswordValid = Object.values(pwdCriteria).every(Boolean);
+  const isEmailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -38,7 +54,6 @@ export default function LoginPage() {
       const data = await response.json();
 
       if (!response.ok) {
-        // Se o erro for "Email not confirmed", podemos direcionar direto para a tela de OTP
         if (data.error && (data.error.includes('confirm') || data.error.includes('confirmado'))) {
           setMode('verify');
           setSuccessMessage('Por favor, digite o código de verificação enviado ao seu e-mail.');
@@ -49,8 +64,9 @@ export default function LoginPage() {
 
       router.push('/dashboard');
       router.refresh();
-    } catch (err: any) {
-      setErrorMessage(err.message || 'Erro ao fazer login. Verifique suas credenciais.');
+    } catch (err) {
+      const error = err as Error;
+      setErrorMessage(error.message || 'Erro ao fazer login. Verifique suas credenciais.');
     } finally {
       setIsLoading(false);
     }
@@ -58,6 +74,15 @@ export default function LoginPage() {
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isEmailValid) {
+      setErrorMessage('Por favor, insira um endereço de e-mail válido.');
+      return;
+    }
+    if (!isPasswordValid) {
+      setErrorMessage('A senha fornecida não atende a todos os requisitos de segurança.');
+      return;
+    }
+
     setIsLoading(true);
     setErrorMessage(null);
     setSuccessMessage(null);
@@ -81,8 +106,9 @@ export default function LoginPage() {
       // Ir para modo de verificação de código OTP
       setMode('verify');
       setSuccessMessage('Conta pré-registrada! Digite o código de 6 dígitos enviado para o seu e-mail.');
-    } catch (err: any) {
-      setErrorMessage(err.message || 'Erro ao criar conta. Tente novamente.');
+    } catch (err) {
+      const error = err as Error;
+      setErrorMessage(error.message || 'Erro ao criar conta. Tente novamente.');
     } finally {
       setIsLoading(false);
     }
@@ -95,7 +121,7 @@ export default function LoginPage() {
 
     try {
       // 2. Verificar código OTP recebido no e-mail
-      const { data, error } = await supabase.auth.verifyOtp({
+      const { error } = await supabase.auth.verifyOtp({
         email,
         token: otpCode.trim(),
         type: 'signup',
@@ -110,8 +136,9 @@ export default function LoginPage() {
         router.push('/dashboard');
         router.refresh();
       }, 1500);
-    } catch (err: any) {
-      setErrorMessage(err.message || 'Código inválido ou expirado. Verifique e tente novamente.');
+    } catch (err) {
+      const error = err as Error;
+      setErrorMessage(error.message || 'Código inválido ou expirado. Verifique e tente novamente.');
     } finally {
       setIsLoading(false);
     }
@@ -122,6 +149,7 @@ export default function LoginPage() {
     setErrorMessage(null);
     setSuccessMessage(null);
     setOtpCode('');
+    setPassword('');
   };
 
   return (
@@ -131,7 +159,7 @@ export default function LoginPage() {
       <div className="absolute bottom-1/4 right-1/4 translate-x-1/2 translate-y-1/2 w-96 h-96 bg-emerald-900/10 rounded-full blur-3xl" />
 
       {/* Card Glassmorphic */}
-      <div className="relative z-10 w-full max-w-md p-8 bg-slate-900/60 backdrop-blur-xl border border-slate-800 rounded-2xl shadow-2xl space-y-6">
+      <div className="relative z-10 w-full max-w-md p-8 bg-slate-900/60 backdrop-blur-xl border border-slate-800 rounded-2xl shadow-2xl space-y-6 animate-in fade-in duration-300">
         
         {/* Cabeçalho do Card */}
         <div className="text-center">
@@ -266,16 +294,45 @@ export default function LoginPage() {
                   required
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Mínimo 6 caracteres"
+                  placeholder="Defina uma senha segura"
                   disabled={isLoading}
                   className="w-full pl-10 pr-4 py-3 bg-slate-950/80 border border-slate-800 rounded-xl text-xs text-slate-100 placeholder-slate-650 focus:outline-none focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500/50 transition disabled:opacity-50"
                 />
               </div>
             </div>
 
+            {/* Checklist Visual Interativa de Segurança */}
+            {password.length > 0 && (
+              <div className="p-3 bg-slate-950/60 border border-slate-850 rounded-xl space-y-1.5 text-[10px]">
+                <p className="font-bold text-slate-450 uppercase tracking-wider">Requisitos da Senha:</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-1.5">
+                  <div className="flex items-center gap-1.5">
+                    <span className={`w-1.5 h-1.5 rounded-full ${pwdCriteria.length ? 'bg-emerald-500' : 'bg-red-500'}`} />
+                    <span className={pwdCriteria.length ? 'text-emerald-400' : 'text-slate-500'}>8 a 32 caracteres</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className={`w-1.5 h-1.5 rounded-full ${pwdCriteria.uppercase ? 'bg-emerald-500' : 'bg-red-500'}`} />
+                    <span className={pwdCriteria.uppercase ? 'text-emerald-400' : 'text-slate-500'}>Letra maiúscula (A-Z)</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className={`w-1.5 h-1.5 rounded-full ${pwdCriteria.lowercase ? 'bg-emerald-500' : 'bg-red-500'}`} />
+                    <span className={pwdCriteria.lowercase ? 'text-emerald-400' : 'text-slate-500'}>Letra minúscula (a-z)</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className={`w-1.5 h-1.5 rounded-full ${pwdCriteria.number ? 'bg-emerald-500' : 'bg-red-500'}`} />
+                    <span className={pwdCriteria.number ? 'text-emerald-400' : 'text-slate-500'}>Um número (0-9)</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 sm:col-span-2">
+                    <span className={`w-1.5 h-1.5 rounded-full ${pwdCriteria.special ? 'bg-emerald-500' : 'bg-red-500'}`} />
+                    <span className={pwdCriteria.special ? 'text-emerald-400' : 'text-slate-500'}>Caractere especial (!@#$...)</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
             <button
               type="submit"
-              disabled={isLoading}
+              disabled={isLoading || !isPasswordValid || !isEmailValid}
               className="w-full py-3.5 bg-gradient-to-r from-blue-600 to-emerald-600 hover:from-blue-500 hover:to-emerald-500 text-white font-bold rounded-xl text-xs shadow-lg shadow-emerald-950/30 transition-all transform hover:-translate-y-0.5 active:translate-y-0 flex items-center justify-center gap-2 disabled:opacity-50 disabled:transform-none"
             >
               {isLoading ? (

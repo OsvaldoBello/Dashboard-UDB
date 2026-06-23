@@ -8,7 +8,7 @@ import {
   Upload, Calendar, FileSpreadsheet, LogOut, CheckCircle2, 
   AlertCircle, Trash2, Eye, BookOpen, Award, TrendingUp, RefreshCw,
   User, Users, Target, Save, FileText, BarChart3, ArrowRight, ClipboardList,
-  PlusCircle, Trash, Lock, Key, X, Sliders
+  PlusCircle, Trash, Lock, Key, X, Sliders, Shield, Loader2
 } from 'lucide-react';
 import { createSupabaseBrowserClient } from '@/lib/supabase-client';
 import { 
@@ -28,6 +28,7 @@ interface Representative {
   nome: string;
   observacoes: string;
   meta_aproveitamento: number;
+  supervisor_email?: string;
 }
 
 interface WeeklyReport {
@@ -77,7 +78,12 @@ export default function DashboardPage() {
   const [representatives, setRepresentatives] = useState<Representative[]>([]);
   const [selectedRepId, setSelectedRepId] = useState<string | null>(null);
   const [weeklyReports, setWeeklyReports] = useState<WeeklyReport[]>([]);
-  const [activeTab, setActiveTab] = useState<'evolution' | 'comparison' | 'dossier'>('evolution');
+  const [activeTab, setActiveTab] = useState<'evolution' | 'comparison' | 'dossier' | 'admin'>('evolution');
+
+  // Estados Admin
+  const [userRole, setUserRole] = useState<'admin' | 'supervisor' | null>(null);
+  const [supervisors, setSupervisors] = useState<any[]>([]);
+  const [isLoadingSupervisors, setIsLoadingSupervisors] = useState(false);
 
   // Estados de Dossiê / Perfil
   const [repNotes, setRepNotes] = useState('');
@@ -103,11 +109,25 @@ export default function DashboardPage() {
   const [passwordError, setPasswordError] = useState('');
   const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
 
+  const validatePassword = (pwd: string) => {
+    return {
+      length: pwd.length >= 8 && pwd.length <= 32,
+      uppercase: /[A-Z]/.test(pwd),
+      lowercase: /[a-z]/.test(pwd),
+      number: /[0-9]/.test(pwd),
+      special: /[!@#$%^&*(),.?":{}|<>]/.test(pwd)
+    };
+  };
+
   const handleUpdatePassword = async (e: React.FormEvent) => {
     e.preventDefault();
     setPasswordError('');
-    if (newPassword.length < 6) {
-      setPasswordError('A senha deve ter pelo menos 6 caracteres.');
+    
+    const criteria = validatePassword(newPassword);
+    const isPwdValid = Object.values(criteria).every(Boolean);
+
+    if (!isPwdValid) {
+      setPasswordError('A nova senha não atende a todos os requisitos de segurança.');
       return;
     }
     if (newPassword !== confirmPassword) {
@@ -118,7 +138,7 @@ export default function DashboardPage() {
     try {
       const { error } = await supabase.auth.updateUser({ password: newPassword });
       if (error) throw error;
-      setMessage({ type: 'success', text: 'Senha do administrador alterada com sucesso!' });
+      setMessage({ type: 'success', text: 'Senha alterada com sucesso!' });
       setIsPasswordModalOpen(false);
       setNewPassword('');
       setConfirmPassword('');
@@ -139,11 +159,28 @@ export default function DashboardPage() {
       }
       setSessionUser(user);
 
-      // Buscar todos os representantes vinculados ao usuário
-      const { data: reps, error: repsError } = await supabase
-        .from('representantes')
-        .select('id, nome, observacoes, meta_aproveitamento')
-        .order('nome');
+      // Buscar papel do usuário na tabela perfis com fallback seguro
+      let role: 'admin' | 'supervisor' = 'supervisor';
+      try {
+        const { data: profile } = await supabase
+          .from('perfis')
+          .select('role')
+          .eq('id', user.id)
+          .maybeSingle();
+        if (profile?.role) {
+          role = profile.role;
+        }
+      } catch (e) {
+        console.warn('Tabela perfis indisponível:', e);
+      }
+      setUserRole(role);
+
+      // Buscar representantes. Se for admin, busca também o email do supervisor associado
+      let repsQuery = supabase.from('representantes').select('id, nome, observacoes, meta_aproveitamento');
+      if (role === 'admin') {
+        repsQuery = supabase.from('representantes').select('id, nome, observacoes, meta_aproveitamento, perfis(email)');
+      }
+      const { data: reps, error: repsError } = await repsQuery.order('nome');
 
       if (repsError) throw repsError;
       
@@ -151,7 +188,8 @@ export default function DashboardPage() {
         id: r.id,
         nome: r.nome,
         observacoes: r.observacoes || '',
-        meta_aproveitamento: Number(r.meta_aproveitamento ?? 80)
+        meta_aproveitamento: Number(r.meta_aproveitamento ?? 80),
+        supervisor_email: r.perfis?.email || undefined
       }));
 
       setRepresentatives(formattedReps);
@@ -164,6 +202,54 @@ export default function DashboardPage() {
       console.error('Erro ao carregar representantes:', err);
     }
   }, [supabase, router, selectedRepId]);
+
+  const loadSupervisors = useCallback(async () => {
+    setIsLoadingSupervisors(true);
+    try {
+      const res = await fetch('/api/auth/users');
+      if (res.ok) {
+        const data = await res.json();
+        setSupervisors(data.supervisors || []);
+      } else {
+        const data = await res.json();
+        console.error('Erro ao buscar supervisores:', data.error);
+      }
+    } catch (err) {
+      console.error('Erro ao carregar supervisores:', err);
+    } finally {
+      setIsLoadingSupervisors(false);
+    }
+  }, []);
+
+  const handleDeleteSupervisor = async (userId: string, userEmail: string) => {
+    if (!confirm(`Tem certeza que deseja excluir permanentemente o supervisor ${userEmail}? Isso apagará todos os representantes e planilhas vinculados a ele.`)) {
+      return;
+    }
+    setIsLoadingSupervisors(true);
+    try {
+      const res = await fetch(`/api/auth/users?id=${userId}`, {
+        method: 'DELETE'
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setMessage({ type: 'success', text: 'Supervisor excluído com sucesso!' });
+        loadSupervisors();
+        loadInitialData();
+      } else {
+        setMessage({ type: 'error', text: data.error || 'Erro ao excluir supervisor.' });
+      }
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err.message || 'Erro de rede ao excluir supervisor.' });
+    } finally {
+      setIsLoadingSupervisors(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'admin' && userRole === 'admin') {
+      loadSupervisors();
+    }
+  }, [activeTab, userRole, loadSupervisors]);
 
   // Carregar relatórios semanais do representante selecionado
   const loadRepresentativeReports = useCallback(async (repId: string) => {
@@ -624,7 +710,12 @@ export default function DashboardPage() {
                         <div className={`p-1.5 rounded-lg ${isSelected ? 'bg-emerald-950/30 text-emerald-400' : 'bg-slate-900 text-slate-500'}`}>
                           <User size={14} />
                         </div>
-                        <span className="text-xs font-bold truncate">{rep.nome}</span>
+                        <div className="flex flex-col min-w-0">
+                          <span className="text-xs font-bold truncate">{rep.nome}</span>
+                          {userRole === 'admin' && rep.supervisor_email && (
+                            <span className="text-[9px] text-slate-500 truncate">{rep.supervisor_email}</span>
+                          )}
+                        </div>
                       </div>
                       
                       <button
@@ -717,6 +808,19 @@ export default function DashboardPage() {
                   <ClipboardList size={14} />
                   Dossiê & Notas
                 </button>
+                {userRole === 'admin' && (
+                  <button
+                    onClick={() => setActiveTab('admin')}
+                    className={`px-4 py-2 text-xs font-bold flex items-center gap-2 border-b-2 transition -mb-px ${
+                      activeTab === 'admin'
+                        ? 'border-emerald-500 text-slate-100'
+                        : 'border-transparent text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    <Shield size={14} className="text-teal-400" />
+                    Painel Admin (Supervisores)
+                  </button>
+                )}
               </div>
 
               {/* TAB 1: EVOLUÇÃO SEMANAL */}
@@ -1053,6 +1157,71 @@ export default function DashboardPage() {
                 </div>
               )}
 
+              {/* TAB 4: PAINEL ADMIN */}
+              {activeTab === 'admin' && userRole === 'admin' && (
+                <div className="p-5 bg-slate-900/50 border border-slate-800 rounded-2xl space-y-6 shadow-xl animate-in fade-in duration-300">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-4">
+                    <div>
+                      <h3 className="text-xs font-bold text-slate-200 uppercase tracking-wider flex items-center gap-1.5">
+                        <Shield size={14} className="text-teal-400" />
+                        Gerenciamento de Supervisores
+                      </h3>
+                      <p className="text-[10px] text-slate-400 mt-0.5">Exclua ou gerencie o acesso dos supervisores cadastrados no sistema.</p>
+                    </div>
+                    <button
+                      onClick={loadSupervisors}
+                      disabled={isLoadingSupervisors}
+                      className="px-3 py-1.5 bg-slate-950 border border-slate-850 hover:border-slate-800 text-slate-300 hover:text-slate-100 rounded-lg text-xs font-bold transition flex items-center gap-1.5 disabled:opacity-50"
+                    >
+                      <RefreshCw size={12} className={isLoadingSupervisors ? 'animate-spin' : ''} />
+                      Atualizar Lista
+                    </button>
+                  </div>
+
+                  {isLoadingSupervisors ? (
+                    <div className="py-12 flex flex-col items-center justify-center gap-2 text-xs text-slate-500">
+                      <Loader2 className="animate-spin text-teal-400" size={24} />
+                      Carregando supervisores...
+                    </div>
+                  ) : supervisors.length > 0 ? (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left border-collapse text-xs">
+                        <thead>
+                          <tr className="border-b border-slate-800 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-950/20">
+                            <th className="py-2.5 px-3">E-mail do Supervisor</th>
+                            <th className="py-2.5 px-3 text-center">Data de Cadastro</th>
+                            <th className="py-2.5 px-3 text-center">Ações</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-900">
+                          {supervisors.map((sup) => (
+                            <tr key={sup.id} className="hover:bg-slate-900/35 transition">
+                              <td className="py-3 px-3 font-semibold text-slate-200">{sup.email}</td>
+                              <td className="py-3 px-3 text-center text-slate-400">
+                                {new Date(sup.created_at).toLocaleDateString('pt-BR')}
+                              </td>
+                              <td className="py-3 px-3 text-center">
+                                <button
+                                  onClick={() => handleDeleteSupervisor(sup.id, sup.email)}
+                                  className="px-2.5 py-1 bg-red-950/30 hover:bg-red-900/40 border border-red-900/40 text-red-400 rounded-lg text-[10px] font-bold transition flex items-center gap-1 mx-auto"
+                                >
+                                  <Trash2 size={10} />
+                                  Excluir Conta
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="py-12 text-center text-slate-500 text-xs">
+                      Nenhum supervisor cadastrado além de você.
+                    </div>
+                  )}
+                </div>
+              )}
+
             </div>
           ) : (
             <div className="h-96 bg-slate-900/20 border border-slate-900/60 rounded-2xl flex flex-col items-center justify-center text-center p-6">
@@ -1094,11 +1263,40 @@ export default function DashboardPage() {
                   type="password"
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
-                  placeholder="Mínimo 6 caracteres"
+                  placeholder="Defina uma nova senha segura"
                   required
                   className="w-full px-3 py-2.5 bg-slate-950 border border-slate-850 rounded-xl text-xs text-slate-100 focus:outline-none focus:ring-1 focus:ring-teal-500 placeholder-slate-750"
                 />
               </div>
+
+              {/* Checklist de Segurança da Senha no Modal */}
+              {newPassword.length > 0 && (
+                <div className="p-3 bg-slate-950/60 border border-slate-850 rounded-xl space-y-1 text-[9px] max-w-sm animate-in fade-in duration-200">
+                  <p className="font-bold text-slate-400 uppercase tracking-wider">Requisitos da Senha:</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-2 gap-y-1">
+                    <div className="flex items-center gap-1">
+                      <span className={`w-1 h-1 rounded-full ${validatePassword(newPassword).length ? 'bg-emerald-500' : 'bg-red-500'}`} />
+                      <span className={validatePassword(newPassword).length ? 'text-emerald-400' : 'text-slate-500'}>8 a 32 caracteres</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <span className={`w-1 h-1 rounded-full ${validatePassword(newPassword).uppercase ? 'bg-emerald-500' : 'bg-red-500'}`} />
+                      <span className={validatePassword(newPassword).uppercase ? 'text-emerald-400' : 'text-slate-500'}>Letra maiúscula</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <span className={`w-1 h-1 rounded-full ${validatePassword(newPassword).lowercase ? 'bg-emerald-500' : 'bg-red-500'}`} />
+                      <span className={validatePassword(newPassword).lowercase ? 'text-emerald-400' : 'text-slate-500'}>Letra minúscula</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <span className={`w-1 h-1 rounded-full ${validatePassword(newPassword).number ? 'bg-emerald-500' : 'bg-red-500'}`} />
+                      <span className={validatePassword(newPassword).number ? 'text-emerald-400' : 'text-slate-500'}>Um número</span>
+                    </div>
+                    <div className="flex items-center gap-1 sm:col-span-2">
+                      <span className={`w-1 h-1 rounded-full ${validatePassword(newPassword).special ? 'bg-emerald-500' : 'bg-red-500'}`} />
+                      <span className={validatePassword(newPassword).special ? 'text-emerald-400' : 'text-slate-500'}>Caractere especial</span>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <div className="space-y-1.5">
                 <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Confirmar Nova Senha</label>
@@ -1129,7 +1327,7 @@ export default function DashboardPage() {
                 </button>
                 <button
                   type="submit"
-                  disabled={isUpdatingPassword}
+                  disabled={isUpdatingPassword || !Object.values(validatePassword(newPassword)).every(Boolean)}
                   className="px-4 py-2 bg-gradient-to-r from-blue-600 to-teal-600 hover:from-blue-500 hover:to-teal-500 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 shadow-lg disabled:opacity-50 transition transform hover:-translate-y-0.5"
                 >
                   {isUpdatingPassword ? (
