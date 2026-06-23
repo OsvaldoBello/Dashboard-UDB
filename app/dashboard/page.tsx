@@ -8,7 +8,7 @@ import {
   Upload, Calendar, FileSpreadsheet, LogOut, CheckCircle2, 
   AlertCircle, Trash2, Eye, BookOpen, Award, TrendingUp, RefreshCw,
   User, Users, Target, Save, FileText, BarChart3, ArrowRight, ClipboardList,
-  PlusCircle, Trash
+  PlusCircle, Trash, Lock, Key, X, Sliders
 } from 'lucide-react';
 import { createSupabaseBrowserClient } from '@/lib/supabase-client';
 import { 
@@ -95,6 +95,39 @@ export default function DashboardPage() {
   const [isUploading, setIsUploading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [dragActive, setDragActive] = useState(false);
+
+  // Estados de Alteração de Senha
+  const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [passwordError, setPasswordError] = useState('');
+  const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
+
+  const handleUpdatePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPasswordError('');
+    if (newPassword.length < 6) {
+      setPasswordError('A senha deve ter pelo menos 6 caracteres.');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setPasswordError('As senhas não coincidem.');
+      return;
+    }
+    setIsUpdatingPassword(true);
+    try {
+      const { error } = await supabase.auth.updateUser({ password: newPassword });
+      if (error) throw error;
+      setMessage({ type: 'success', text: 'Senha do administrador alterada com sucesso!' });
+      setIsPasswordModalOpen(false);
+      setNewPassword('');
+      setConfirmPassword('');
+    } catch (err: any) {
+      setPasswordError(err.message || 'Erro ao alterar a senha.');
+    } finally {
+      setIsUpdatingPassword(false);
+    }
+  };
 
   // Carregar dados principais
   const loadInitialData = useCallback(async () => {
@@ -450,13 +483,21 @@ export default function DashboardPage() {
             </p>
           </div>
 
-          <div className="flex items-center gap-6">
+          <div className="flex items-center gap-4">
             {sessionUser && (
               <span className="text-xs text-slate-400 font-semibold border border-slate-800 bg-slate-950/60 px-3 py-1.5 rounded-lg flex items-center gap-2">
                 <User size={12} className="text-emerald-400" />
                 {sessionUser.email}
               </span>
             )}
+            <button
+              onClick={() => setIsPasswordModalOpen(true)}
+              className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 border border-slate-850 text-slate-350 hover:text-white text-xs font-bold rounded-lg flex items-center gap-2 transition"
+              title="Alterar Senha de Acesso"
+            >
+              <Key size={14} className="text-teal-400" />
+              Alterar Senha
+            </button>
             <button
               onClick={handleLogout}
               className="px-4 py-2 bg-red-950/20 hover:bg-red-950/40 border border-red-900/30 text-red-400 hover:text-red-300 text-xs font-bold rounded-lg flex items-center gap-2 transition"
@@ -1025,6 +1066,86 @@ export default function DashboardPage() {
         </section>
 
       </main>
+
+      {/* MODAL DE ALTERAÇÃO DE SENHA */}
+      {isPasswordModalOpen && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 w-full max-w-sm space-y-6 shadow-2xl relative animate-in fade-in zoom-in duration-200">
+            <button 
+              onClick={() => setIsPasswordModalOpen(false)}
+              className="absolute top-4 right-4 text-slate-500 hover:text-slate-350 transition"
+              type="button"
+            >
+              <X size={16} />
+            </button>
+            
+            <div>
+              <h3 className="text-sm font-black text-slate-100 uppercase tracking-wider flex items-center gap-2">
+                <Lock size={15} className="text-teal-400" />
+                Alterar Senha do Supervisor
+              </h3>
+              <p className="text-[10px] text-slate-450 mt-1">Insira a nova senha para atualizar as credenciais do seu dashboard.</p>
+            </div>
+
+            <form onSubmit={handleUpdatePassword} className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Nova Senha</label>
+                <input
+                  type="password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  placeholder="Mínimo 6 caracteres"
+                  required
+                  className="w-full px-3 py-2.5 bg-slate-950 border border-slate-850 rounded-xl text-xs text-slate-100 focus:outline-none focus:ring-1 focus:ring-teal-500 placeholder-slate-750"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Confirmar Nova Senha</label>
+                <input
+                  type="password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  placeholder="Repita a nova senha"
+                  required
+                  className="w-full px-3 py-2.5 bg-slate-950 border border-slate-850 rounded-xl text-xs text-slate-100 focus:outline-none focus:ring-1 focus:ring-teal-500 placeholder-slate-750"
+                />
+              </div>
+
+              {passwordError && (
+                <div className="text-[10px] font-semibold text-red-400 bg-red-950/20 border border-red-900/30 p-2.5 rounded-lg flex items-center gap-1.5">
+                  <AlertCircle size={12} className="flex-shrink-0" />
+                  <span>{passwordError}</span>
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-2.5 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsPasswordModalOpen(false)}
+                  className="px-3 py-2 text-xs font-bold text-slate-400 hover:text-slate-200 transition"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isUpdatingPassword}
+                  className="px-4 py-2 bg-gradient-to-r from-blue-600 to-teal-600 hover:from-blue-500 hover:to-teal-500 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 shadow-lg disabled:opacity-50 transition transform hover:-translate-y-0.5"
+                >
+                  {isUpdatingPassword ? (
+                    <>
+                      <RefreshCw className="animate-spin" size={12} />
+                      Salvando...
+                    </>
+                  ) : (
+                    'Salvar Senha'
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
     </div>
   );
