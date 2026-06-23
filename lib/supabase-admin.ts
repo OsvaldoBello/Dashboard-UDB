@@ -1,8 +1,17 @@
 import { createClient } from '@supabase/supabase-js';
 
+function cleanEnvValue(value: string | undefined): string | undefined {
+  if (!value) return value;
+  let cleaned = value.trim();
+  if ((cleaned.startsWith('"') && cleaned.endsWith('"')) || (cleaned.startsWith("'") && cleaned.endsWith("'"))) {
+    cleaned = cleaned.slice(1, -1);
+  }
+  return cleaned.trim();
+}
+
 export function createSupabaseAdminClient() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const url = cleanEnvValue(process.env.NEXT_PUBLIC_SUPABASE_URL);
+  const serviceKey = cleanEnvValue(process.env.SUPABASE_SERVICE_ROLE_KEY);
 
   const isValidUrl = url && (url.startsWith('http://') || url.startsWith('https://'));
 

@@ -1,6 +1,15 @@
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 
+function cleanEnvValue(value: string | undefined): string | undefined {
+  if (!value) return value;
+  let cleaned = value.trim();
+  if ((cleaned.startsWith('"') && cleaned.endsWith('"')) || (cleaned.startsWith("'") && cleaned.endsWith("'"))) {
+    cleaned = cleaned.slice(1, -1);
+  }
+  return cleaned.trim();
+}
+
 export async function proxy(request: NextRequest) {
   let response = NextResponse.next({
     request: {
@@ -9,8 +18,8 @@ export async function proxy(request: NextRequest) {
   });
 
   // 1. Inicializar cliente Supabase Serverless de forma segura
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const url = cleanEnvValue(process.env.NEXT_PUBLIC_SUPABASE_URL);
+  const anonKey = cleanEnvValue(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
 
   if (!url || !anonKey) {
     // Se as variáveis de ambiente não estiverem configuradas na Vercel,
