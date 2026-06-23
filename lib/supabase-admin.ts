@@ -10,8 +10,19 @@ function cleanEnvValue(value: string | undefined): string | undefined {
 }
 
 export function createSupabaseAdminClient() {
-  const url = cleanEnvValue(process.env.NEXT_PUBLIC_SUPABASE_URL);
-  const serviceKey = cleanEnvValue(process.env.SUPABASE_SERVICE_ROLE_KEY);
+  let url = cleanEnvValue(process.env.NEXT_PUBLIC_SUPABASE_URL);
+  let serviceKey = cleanEnvValue(process.env.SUPABASE_SERVICE_ROLE_KEY);
+
+  // Auto-correção caso as chaves estejam invertidas na Vercel
+  if (url && serviceKey) {
+    const urlIsJwtOrKey = !url.startsWith('http://') && !url.startsWith('https://');
+    const keyIsUrl = serviceKey.startsWith('http://') || serviceKey.startsWith('https://');
+    if (urlIsJwtOrKey && keyIsUrl) {
+      const temp = url;
+      url = serviceKey;
+      serviceKey = temp;
+    }
+  }
 
   const isValidUrl = url && (url.startsWith('http://') || url.startsWith('https://'));
 

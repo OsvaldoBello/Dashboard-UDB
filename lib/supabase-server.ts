@@ -12,8 +12,19 @@ function cleanEnvValue(value: string | undefined): string | undefined {
 
 export async function createSupabaseServerClient() {
   const cookieStore = await cookies();
-  const url = cleanEnvValue(process.env.NEXT_PUBLIC_SUPABASE_URL);
-  const anonKey = cleanEnvValue(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
+  let url = cleanEnvValue(process.env.NEXT_PUBLIC_SUPABASE_URL);
+  let anonKey = cleanEnvValue(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
+
+  // Auto-correção caso as chaves estejam invertidas na Vercel
+  if (url && anonKey) {
+    const urlIsJwtOrKey = !url.startsWith('http://') && !url.startsWith('https://');
+    const keyIsUrl = anonKey.startsWith('http://') || anonKey.startsWith('https://');
+    if (urlIsJwtOrKey && keyIsUrl) {
+      const temp = url;
+      url = anonKey;
+      anonKey = temp;
+    }
+  }
 
   const isValidUrl = url && (url.startsWith('http://') || url.startsWith('https://'));
 

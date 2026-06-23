@@ -18,8 +18,19 @@ export async function proxy(request: NextRequest) {
   });
 
   // 1. Inicializar cliente Supabase Serverless de forma segura
-  const url = cleanEnvValue(process.env.NEXT_PUBLIC_SUPABASE_URL);
-  const anonKey = cleanEnvValue(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
+  let url = cleanEnvValue(process.env.NEXT_PUBLIC_SUPABASE_URL);
+  let anonKey = cleanEnvValue(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
+
+  // Auto-correção caso as chaves estejam invertidas na Vercel
+  if (url && anonKey) {
+    const urlIsJwtOrKey = !url.startsWith('http://') && !url.startsWith('https://');
+    const keyIsUrl = anonKey.startsWith('http://') || anonKey.startsWith('https://');
+    if (urlIsJwtOrKey && keyIsUrl) {
+      const temp = url;
+      url = anonKey;
+      anonKey = temp;
+    }
+  }
 
   if (!url || !anonKey) {
     // Se as variáveis de ambiente não estiverem configuradas na Vercel,
