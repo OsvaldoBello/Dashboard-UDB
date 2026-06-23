@@ -173,6 +173,23 @@ export default function LoginPage() {
           </p>
         </div>
 
+        {/* Alerta de Configuração Faltante */}
+        {(!process.env.NEXT_PUBLIC_SUPABASE_URL || 
+          !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 
+          process.env.NEXT_PUBLIC_SUPABASE_URL.includes('placeholder')) && (
+          <div className="p-3.5 bg-amber-950/40 border border-amber-900/50 rounded-xl text-xs text-amber-300 text-left space-y-1">
+            <div className="flex items-center gap-2 font-bold text-amber-400">
+              <AlertCircle size={14} className="flex-shrink-0" />
+              <span>Erro de Configuração Supabase</span>
+            </div>
+            <p className="leading-relaxed opacity-90">
+              As variáveis de ambiente do Supabase não foram detectadas no navegador. 
+              Se estiver rodando <strong>localmente</strong>, reinicie seu servidor de desenvolvimento (parando e rodando <code>npm run dev</code> de novo). 
+              Se estiver na <strong>Vercel</strong>, adicione <code>NEXT_PUBLIC_SUPABASE_URL</code> e <code>NEXT_PUBLIC_SUPABASE_ANON_KEY</code> no painel de Environment Variables do projeto e faça um novo deploy.
+            </p>
+          </div>
+        )}
+
         {/* Mensagens de Feedback */}
         {errorMessage && (
           <div className="p-3 bg-red-950/40 border border-red-900/50 rounded-xl text-xs text-red-400 text-center flex items-center justify-center gap-2">
