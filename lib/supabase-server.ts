@@ -24,20 +24,36 @@ export async function createSupabaseServerClient() {
     );
   }
 
-  return createServerClient(url, anonKey, {
-    cookies: {
-      getAll() {
-        return cookieStore.getAll();
+  try {
+    return createServerClient(url, anonKey, {
+      cookies: {
+        getAll() {
+          return cookieStore.getAll();
+        },
+        setAll(cookiesToSet) {
+          try {
+            cookiesToSet.forEach(({ name, value, options }) =>
+              cookieStore.set(name, value, options)
+            );
+          } catch {
+            // Silencia erro se chamado de um Server Component estrutural
+          }
+        },
       },
-      setAll(cookiesToSet) {
-        try {
-          cookiesToSet.forEach(({ name, value, options }) =>
-            cookieStore.set(name, value, options)
-          );
-        } catch {
-          // Silencia erro se chamado de um Server Component estrutural
-        }
-      },
-    },
-  });
+    });
+  } catch (err) {
+    console.error("Erro ao instanciar Supabase Server Client com URL:", url, err);
+    return createServerClient(
+      'https://placeholder-url.supabase.co',
+      'placeholder-anon-key',
+      {
+        cookies: {
+          getAll() {
+            return [];
+          },
+          setAll() {},
+        },
+      }
+    );
+  }
 }

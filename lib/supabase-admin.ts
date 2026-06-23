@@ -20,10 +20,24 @@ export function createSupabaseAdminClient() {
     );
   }
 
-  return createClient(url, serviceKey, {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false
-    }
-  });
+  try {
+    return createClient(url, serviceKey, {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false
+      }
+    });
+  } catch (err) {
+    console.error("Erro ao instanciar Supabase Admin Client com URL:", url, err);
+    return createClient(
+      'https://placeholder-url.supabase.co',
+      'placeholder-service-key',
+      {
+        auth: {
+          autoRefreshToken: false,
+          persistSession: false
+        }
+      }
+    );
+  }
 }

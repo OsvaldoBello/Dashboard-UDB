@@ -14,5 +14,13 @@ export function createSupabaseBrowserClient() {
     );
   }
 
-  return createBrowserClient(url, anonKey);
+  try {
+    return createBrowserClient(url, anonKey);
+  } catch (err) {
+    console.error("Erro ao instanciar Supabase Browser Client com URL:", url, err);
+    return createBrowserClient(
+      'https://placeholder-url.supabase.co',
+      'placeholder-anon-key'
+    );
+  }
 }
