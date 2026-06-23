@@ -10,6 +10,19 @@ const ALLOWED_MIME_TYPES = [
   'application/vnd.ms-excel', // .xls
 ];
 
+// Helper para obter a segunda-feira de uma semana ISO 8601 (formato YYYY-Www)
+function getMondayOfISOWeek(weekStr: string): Date {
+  const parts = weekStr.split('-W');
+  const year = parseInt(parts[0], 10);
+  const week = parseInt(parts[1], 10);
+
+  const jan4 = new Date(Date.UTC(year, 0, 4));
+  const day = jan4.getUTCDay();
+  const monday = new Date(jan4.getTime() - ((day === 0 ? 6 : day - 1) * 24 * 60 * 60 * 1000));
+  const targetMonday = new Date(monday.getTime() + (week - 1) * 7 * 24 * 60 * 60 * 1000);
+  return targetMonday;
+}
+
 export async function POST(request: Request) {
   try {
     // 1. Validar Autenticação (Session Hardening)
@@ -25,11 +38,11 @@ export async function POST(request: Request) {
     // 2. Extrair dados da Requisição
     const formData = await request.formData();
     const file = formData.get('file') as File | null;
-    const monthYear = formData.get('month') as string | null; // Formato: YYYY-MM
+    const weekStr = formData.get('week') as string | null; // Formato: YYYY-Www
 
-    if (!file || !monthYear) {
+    if (!file || !weekStr) {
       return NextResponse.json(
-        { error: 'Arquivo e mês de referência são obrigatórios.' },
+        { error: 'Arquivo e semana de referência são obrigatórios.' },
         { status: 400 }
       );
     }
@@ -48,9 +61,6 @@ export async function POST(request: Request) {
         { status: 400 }
       );
     }
-
-    // Prevenir Path Traversal sanitizando o nome do arquivo
-    const sanitizedFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
 
     // 4. Ler e Processar Dados da Planilha
     const arrayBuffer = await file.arrayBuffer();
@@ -135,7 +145,7 @@ export async function POST(request: Request) {
     if (dotIndex !== -1) {
       repName = repName.substring(0, dotIndex);
     }
-    // Remove prefixos comuns de timestamps e identificadores (ex: "20260603170623_3U2R417Z20Q_")
+    // Remove prefixos comuns de timestamps e identificadores
     repName = repName.replace(/^\d+_[a-zA-Z0-9]+_/g, '').replace(/_representante$/i, '').replace(/representante$/i, '').trim();
     // Capitalizar
     repName = repName.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
@@ -169,13 +179,15 @@ export async function POST(request: Request) {
       representanteId = representante.id;
     }
 
-    // Gravar/Upsert relatório mensal do representante
-    const mesReferencia = `${monthYear}-01`; // Primeiro dia do mês para formato DATE
+    // Gravar/Upsert relatório semanal do representante
+    const mondayDate = getMondayOfISOWeek(weekStr);
+    const semanaReferencia = mondayDate.toISOString().split('T')[0]; // Data formatada: YYYY-MM-DD
+    
     const { error: reportError } = await supabase
-      .from('relatorios_mensais')
+      .from('relatorios_semanais')
       .upsert({
         representante_id: representanteId,
-        mes_ano: mesReferencia,
+        semana_ano: semanaReferencia,
         total_treinamentos: totalContents,
         treinamentos_concluidos: completedContents,
         total_exames: totalExams,
@@ -184,18 +196,19 @@ export async function POST(request: Request) {
         detalhes: detalhes,
         usuario_id: usuarioId
       }, {
-        onConflict: 'representante_id,mes_ano'
+        onConflict: 'representante_id,semana_ano'
       });
 
     if (reportError) {
-      throw new Error(`Erro ao salvar relatório mensal: ${reportError.message}`);
+      throw new Error(`Erro ao salvar relatório semanal: ${reportError.message}`);
     }
 
     return NextResponse.json({
       success: true,
       data: {
         representante: repName,
-        mes: monthYear,
+        week: weekStr,
+        semana_ano: semanaReferencia,
         total_treinamentos: totalContents,
         treinamentos_concluidos: completedContents,
         total_exames: totalExams,
