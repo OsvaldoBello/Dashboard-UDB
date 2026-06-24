@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Lock, Mail, Loader2, KeyRound, ArrowLeft, CheckCircle2, AlertCircle } from 'lucide-react';
 import { createSupabaseBrowserClient } from '@/lib/supabase-client';
@@ -30,6 +30,34 @@ export default function LoginPage() {
   
   const router = useRouter();
   const supabase = createSupabaseBrowserClient();
+
+  // Captura código de confirmação vindo do link de e-mail automaticamente (?code=...)
+  useEffect(() => {
+    const handleUrlCode = async () => {
+      const searchParams = new URLSearchParams(window.location.search);
+      const code = searchParams.get('code');
+      if (code) {
+        setIsLoading(true);
+        setErrorMessage(null);
+        setSuccessMessage('Verificando seu link de confirmação...');
+        try {
+          const { error } = await supabase.auth.exchangeCodeForSession(code);
+          if (error) throw error;
+          
+          setSuccessMessage('E-mail confirmado com sucesso! Redirecionando...');
+          setTimeout(() => {
+            router.push('/dashboard');
+            router.refresh();
+          }, 1500);
+        } catch (err) {
+          const error = err as Error;
+          setErrorMessage(error.message || 'Link expirado ou inválido.');
+          setIsLoading(false);
+        }
+      }
+    };
+    handleUrlCode();
+  }, [router, supabase]);
 
   // Validação em tempo real
   const pwdCriteria = validatePassword(password);
