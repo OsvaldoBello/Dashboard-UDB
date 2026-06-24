@@ -88,13 +88,18 @@ export default function LoginPage() {
     setSuccessMessage(null);
 
     try {
-      // 1. Cadastrar usuário no Supabase Auth
-      const { data, error } = await supabase.auth.signUp({
-        email,
-        password,
+      // 1. Cadastrar usuário no Supabase Auth via API Route do Servidor (Seguro e dinâmico)
+      const response = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
       });
 
-      if (error) throw error;
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Erro ao criar conta.');
+      }
 
       // Se já logou direto ou não exige confirmação
       if (data.session) {
@@ -120,14 +125,18 @@ export default function LoginPage() {
     setErrorMessage(null);
 
     try {
-      // 2. Verificar código OTP recebido no e-mail
-      const { error } = await supabase.auth.verifyOtp({
-        email,
-        token: otpCode.trim(),
-        type: 'signup',
+      // 2. Verificar código OTP recebido no e-mail via API Route do Servidor (Seguro e dinâmico)
+      const response = await fetch('/api/auth/verify-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, token: otpCode.trim() }),
       });
 
-      if (error) throw error;
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Código inválido ou expirado.');
+      }
 
       setSuccessMessage('Conta confirmada com sucesso! Redirecionando...');
       
