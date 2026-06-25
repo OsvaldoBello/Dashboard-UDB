@@ -29,6 +29,7 @@ interface Representative {
   observacoes: string;
   meta_aproveitamento: number;
   supervisor_email?: string;
+  supervisorEmail?: string;
 }
 
 interface WeeklyReport {
@@ -43,29 +44,19 @@ interface WeeklyReport {
   observacoes: string;
 }
 
-// Helpers para tratamento de semanas ISO 8601
-const getISOWeekString = (date: Date) => {
-  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
-  const dayNum = d.getUTCDay() || 7;
-  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
-  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-  const weekNo = Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
-  return `${d.getUTCFullYear()}-W${String(weekNo).padStart(2, '0')}`;
-};
-
+// Helpers para tratamento de semanas do mês
 const formatISOWeekDisplay = (dateStr: string) => {
   if (!dateStr) return '';
   const date = new Date(dateStr + 'T00:00:00Z');
-  const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
-  const dayNum = d.getUTCDay() || 7;
-  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
-  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-  const weekNo = Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
-  
-  // Format DD/MM format for Monday
-  const day = String(date.getUTCDate()).padStart(2, '0');
-  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
-  return `Semana ${String(weekNo).padStart(2, '0')} (${day}/${month})`;
+  const day = date.getUTCDate();
+  const weekOfMonth = Math.ceil(day / 7);
+  const months = [
+    'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+    'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'
+  ];
+  const monthName = months[date.getUTCMonth()];
+  const year = date.getUTCFullYear();
+  return `Semana ${weekOfMonth}/${monthName} (${year})`;
 };
 
 export default function DashboardPage() {
@@ -74,11 +65,19 @@ export default function DashboardPage() {
 
   // Estados
   const [sessionUser, setSessionUser] = useState<any>(null);
-  const [selectedWeekInput, setSelectedWeekInput] = useState(() => getISOWeekString(new Date()));
+  const [selectedYear, setSelectedYear] = useState(() => new Date().getFullYear());
+  const [selectedMonth, setSelectedMonth] = useState(() => new Date().getMonth()); // 0-11
+  const [selectedWeekOfMonth, setSelectedWeekOfMonth] = useState(1);
+  const [uploadRepId, setUploadRepId] = useState<string | null>(null);
+  
   const [representatives, setRepresentatives] = useState<Representative[]>([]);
   const [selectedRepId, setSelectedRepId] = useState<string | null>(null);
   const [weeklyReports, setWeeklyReports] = useState<WeeklyReport[]>([]);
   const [activeTab, setActiveTab] = useState<'evolution' | 'comparison' | 'dossier' | 'admin'>('evolution');
+
+  // Estados de Criação de Representante
+  const [newRepName, setNewRepName] = useState('');
+  const [isCreatingRep, setIsCreatingRep] = useState(false);
 
   // Estados Admin
   const [userRole, setUserRole] = useState<'admin' | 'supervisor' | null>(null);
@@ -101,6 +100,13 @@ export default function DashboardPage() {
   const [isUploading, setIsUploading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [dragActive, setDragActive] = useState(false);
+  const [uploadMode, setUploadMode] = useState<'file' | 'manual'>('file');
+  const [totalTreinamentos, setTotalTreinamentos] = useState<string>('');
+  const [treinamentosConcluidos, setTreinamentosConcluidos] = useState<string>('');
+  const [totalExames, setTotalExames] = useState<string>('');
+  const [examesConcluidos, setExamesConcluidos] = useState<string>('');
+  const [manualObservations, setManualObservations] = useState<string>('');
+  const [isSavingManual, setIsSavingManual] = useState(false);
 
   // Estados de Alteração de Senha
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
@@ -176,32 +182,49 @@ export default function DashboardPage() {
       setUserRole(role);
 
       // Buscar representantes. Se for admin, busca também o email do supervisor associado
+      let repsResult: any[] = [];
       let repsQuery = supabase.from('representantes').select('id, nome, observacoes, meta_aproveitamento');
-      if (role === 'admin') {
-        repsQuery = supabase.from('representantes').select('id, nome, observacoes, meta_aproveitamento, perfis(email)');
-      }
-      const { data: reps, error: repsError } = await repsQuery.order('nome');
-
-      if (repsError) throw repsError;
       
-      const formattedReps = (reps || []).map((r: any) => ({
+      if (role === 'admin') {
+        try {
+          const adminQuery = supabase.from('representantes').select('id, nome, observacoes, meta_aproveitamento, perfis(email)');
+          const { data, error } = await adminQuery.order('nome');
+          if (error) throw error;
+          repsResult = data || [];
+        } catch (e) {
+          console.warn('Falha ao buscar representantes com perfis, buscando sem join:', e);
+          const { data, error } = await repsQuery.order('nome');
+          if (error) throw error;
+          repsResult = data || [];
+        }
+      } else {
+        const { data, error } = await repsQuery.order('nome');
+        if (error) throw error;
+        repsResult = data || [];
+      }
+      
+      const formattedReps = repsResult.map((r: any) => ({
         id: r.id,
         nome: r.nome,
         observacoes: r.observacoes || '',
         meta_aproveitamento: Number(r.meta_aproveitamento ?? 80),
-        supervisor_email: r.perfis?.email || undefined
+        supervisor_email: r.perfis?.email || undefined,
+        supervisorEmail: r.perfis?.email || undefined
       }));
 
       setRepresentatives(formattedReps);
 
       // Se nenhum representante estiver selecionado e houver representantes, seleciona o primeiro
-      if (formattedReps.length > 0 && !selectedRepId) {
-        setSelectedRepId(formattedReps[0].id);
-      }
+      setSelectedRepId(current => {
+        if (!current && formattedReps.length > 0) {
+          return formattedReps[0].id;
+        }
+        return current;
+      });
     } catch (err) {
       console.error('Erro ao carregar representantes:', err);
     }
-  }, [supabase, router, selectedRepId]);
+  }, [supabase, router]);
 
   const loadSupervisors = useCallback(async () => {
     setIsLoadingSupervisors(true);
@@ -333,14 +356,66 @@ export default function DashboardPage() {
     router.refresh();
   };
 
+  // Auto-selecionar uploadRepId quando selectedRepId muda
+  useEffect(() => {
+    if (selectedRepId) {
+      setUploadRepId(selectedRepId);
+    }
+  }, [selectedRepId]);
+
+  // Data de referência calculada
+  const computedDateString = useMemo(() => {
+    const day = (selectedWeekOfMonth - 1) * 7 + 1;
+    const y = selectedYear;
+    const m = String(selectedMonth + 1).padStart(2, '0');
+    const d = String(day).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }, [selectedYear, selectedMonth, selectedWeekOfMonth]);
+
+  // Função de criação manual de representante
+  const handleCreateRep = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newRepName.trim()) return;
+    setIsCreatingRep(true);
+    setMessage(null);
+    try {
+      const response = await fetch('/api/representantes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nome: newRepName.trim() }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || 'Falha ao criar o perfil do representante.');
+      }
+      setMessage({ type: 'success', text: `Perfil do representante "${newRepName.trim()}" criado com sucesso!` });
+      setNewRepName('');
+      
+      await loadInitialData();
+      if (data.data?.id) {
+        setSelectedRepId(data.data.id);
+        setUploadRepId(data.data.id);
+      }
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err.message || 'Erro inesperado.' });
+    } finally {
+      setIsCreatingRep(false);
+    }
+  };
+
   // Upload de arquivos
   const handleFileUpload = async (file: File) => {
+    if (!uploadRepId) {
+      setMessage({ type: 'error', text: 'Selecione ou crie um representante para vincular o upload.' });
+      return;
+    }
     setIsUploading(true);
     setMessage(null);
 
     const formData = new FormData();
     formData.append('file', file);
-    formData.append('week', selectedWeekInput);
+    formData.append('week', computedDateString);
+    formData.append('representanteId', uploadRepId);
 
     try {
       const response = await fetch('/api/upload', {
@@ -354,27 +429,63 @@ export default function DashboardPage() {
         throw new Error(data.error || 'Falha ao processar o arquivo.');
       }
 
-      setMessage({ type: 'success', text: `Planilha de ${data.data.representante} importada para a semana com sucesso!` });
+      setMessage({ type: 'success', text: `Planilha de ${data.data.representante} importada com sucesso!` });
       
-      // Recarregar os representantes (caso seja um novo) e depois atualizar a lista de relatórios
       await loadInitialData();
-      
-      // Achar o representante correspondente
-      const targetRep = representatives.find(r => r.nome.toLowerCase() === data.data.representante.toLowerCase());
-      if (targetRep) {
-        setSelectedRepId(targetRep.id);
-        await loadRepresentativeReports(targetRep.id);
-      } else {
-        // Se for um novo cadastrado
-        const { data: newReps } = await supabase.from('representantes').select('id, nome').eq('nome', data.data.representante);
-        if (newReps && newReps.length > 0) {
-          setSelectedRepId(newReps[0].id);
-        }
-      }
+      await loadRepresentativeReports(uploadRepId);
     } catch (err: any) {
       setMessage({ type: 'error', text: err.message || 'Erro inesperado no upload.' });
     } finally {
       setIsUploading(false);
+    }
+  };
+
+  // Salvar Relatório Semanal Manual
+  const handleSaveManualReport = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!uploadRepId) {
+      setMessage({ type: 'error', text: 'Selecione ou crie um representante para vincular o lançamento.' });
+      return;
+    }
+
+    setIsSavingManual(true);
+    setMessage(null);
+
+    try {
+      const response = await fetch('/api/relatorios', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          representanteId: uploadRepId,
+          semana_ano: computedDateString,
+          total_treinamentos: Number(totalTreinamentos) || 0,
+          treinamentos_concluidos: Number(treinamentosConcluidos) || 0,
+          total_exames: Number(totalExames) || 0,
+          exames_concluidos: Number(examesConcluidos) || 0,
+          observacoes: manualObservations,
+        }),
+      });
+
+      const resData = await response.json();
+      if (!response.ok) {
+        throw new Error(resData.error || 'Falha ao salvar relatório manual.');
+      }
+
+      setMessage({ type: 'success', text: `Dados de aproveitamento salvos com sucesso!` });
+
+      // Resetar form
+      setTotalTreinamentos('');
+      setTreinamentosConcluidos('');
+      setTotalExames('');
+      setExamesConcluidos('');
+      setManualObservations('');
+
+      await loadInitialData();
+      await loadRepresentativeReports(uploadRepId);
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err.message || 'Erro inesperado.' });
+    } finally {
+      setIsSavingManual(false);
     }
   };
 
@@ -555,10 +666,13 @@ export default function DashboardPage() {
   }, [compareWeekA, compareWeekB, weeklyReports]);
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans relative overflow-hidden">
+      {/* Glows de Fundo Ambiente */}
+      <div className="absolute top-[-10%] left-[-10%] w-[500px] h-[500px] bg-blue-500/5 rounded-full blur-[120px] pointer-events-none" />
+      <div className="absolute bottom-[-10%] right-[-10%] w-[500px] h-[500px] bg-emerald-500/5 rounded-full blur-[120px] pointer-events-none" />
       
       {/* 1. CABEÇALHO */}
-      <header className="border-b border-slate-900 bg-slate-900/30 backdrop-blur-xl sticky top-0 z-40">
+      <header className="border-b border-slate-900 bg-slate-900/20 backdrop-blur-xl sticky top-0 z-40">
         <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-teal-400 to-emerald-400">
@@ -572,16 +686,16 @@ export default function DashboardPage() {
           <div className="flex items-center gap-4">
             {sessionUser && (
               <span className="text-xs text-slate-400 font-semibold border border-slate-800 bg-slate-950/60 px-3 py-1.5 rounded-lg flex items-center gap-2">
-                <User size={12} className="text-emerald-400" />
+                <User size={12} className="text-emerald-450" />
                 {sessionUser.email}
               </span>
             )}
             <button
               onClick={() => setIsPasswordModalOpen(true)}
-              className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 border border-slate-850 text-slate-350 hover:text-white text-xs font-bold rounded-lg flex items-center gap-2 transition"
+              className="px-3.5 py-2 bg-blue-950/15 hover:bg-blue-950/30 border border-blue-900/30 text-blue-400 hover:text-blue-300 text-xs font-bold rounded-lg flex items-center gap-2 transition"
               title="Alterar Senha de Acesso"
             >
-              <Key size={14} className="text-teal-400" />
+              <Key size={14} />
               Alterar Senha
             </button>
             <button
@@ -603,66 +717,238 @@ export default function DashboardPage() {
           
           {/* UPLOAD DE PLANILHA */}
           <div className="p-5 bg-slate-900/50 backdrop-blur-md border border-slate-800 rounded-2xl space-y-4 shadow-xl">
-            <h2 className="text-sm font-black text-slate-200 uppercase tracking-wider flex items-center gap-2">
-              <Calendar size={16} className="text-blue-400" />
-              Upload Semanal
-            </h2>
+            <div className="flex items-center justify-between border-b border-slate-855 pb-2">
+              <h2 className="text-sm font-black text-slate-200 uppercase tracking-wider flex items-center gap-2">
+                <Calendar size={16} className="text-blue-400" />
+                Adicionar Dados
+              </h2>
+              <div className="flex bg-slate-950 p-0.5 rounded-lg border border-slate-850">
+                <button
+                  type="button"
+                  onClick={() => setUploadMode('file')}
+                  disabled={isUploading || isSavingManual}
+                  className={`px-2 py-1 text-[10px] font-bold rounded transition ${
+                    uploadMode === 'file'
+                      ? 'bg-blue-600/20 text-blue-405 border border-blue-500/20'
+                      : 'text-slate-500 hover:text-slate-300'
+                  }`}
+                >
+                  Planilha
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setUploadMode('manual')}
+                  disabled={isUploading || isSavingManual}
+                  className={`px-2 py-1 text-[10px] font-bold rounded transition ${
+                    uploadMode === 'manual'
+                      ? 'bg-emerald-600/20 text-emerald-400 border border-emerald-500/20'
+                      : 'text-slate-500 hover:text-slate-300'
+                  }`}
+                >
+                  Manual
+                </button>
+              </div>
+            </div>
 
-            {/* Seletor de Semana */}
+            {/* Seletor de Representante */}
             <div className="space-y-1.5">
               <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                Semana de Referência
+                Vincular ao Representante
               </label>
-              <input
-                type="week"
-                value={selectedWeekInput}
-                onChange={(e) => setSelectedWeekInput(e.target.value)}
-                disabled={isUploading}
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30 transition disabled:opacity-50"
-              />
+              <select
+                value={uploadRepId || ''}
+                onChange={(e) => setUploadRepId(e.target.value)}
+                disabled={isUploading || isSavingManual}
+                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500/30 transition disabled:opacity-50"
+              >
+                <option value="">Selecione um representante...</option>
+                {representatives.map(r => (
+                  <option key={r.id} value={r.id}>{r.nome}</option>
+                ))}
+              </select>
             </div>
 
-            {/* Dropzone */}
-            <div
-              onDragEnter={handleDrag}
-              onDragOver={handleDrag}
-              onDragLeave={handleDrag}
-              onDrop={handleDrop}
-              onClick={() => document.getElementById('file-input')?.click()}
-              className={`p-6 border border-dashed rounded-xl flex flex-col items-center justify-center text-center cursor-pointer transition-all ${
-                dragActive 
-                  ? 'border-emerald-500 bg-emerald-950/15' 
-                  : 'border-slate-850 hover:border-slate-700 bg-slate-950/40 hover:bg-slate-950/60'
-              }`}
-            >
-              <input
-                id="file-input"
-                type="file"
-                accept=".xlsx,.csv"
-                className="hidden"
-                onChange={(e) => {
-                  if (e.target.files && e.target.files[0]) {
-                    handleFileUpload(e.target.files[0]);
-                  }
-                }}
-                disabled={isUploading}
-              />
-
-              {isUploading ? (
-                <div className="space-y-2 py-2">
-                  <RefreshCw className="animate-spin text-emerald-400 mx-auto" size={24} />
-                  <p className="text-xs font-bold text-slate-300">Auditando Planilha...</p>
+            {/* Seletores de Mês e Semana de Referência */}
+            <div className="space-y-2">
+              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                Referência do Lançamento
+              </label>
+              <div className="grid grid-cols-3 gap-2">
+                <div className="space-y-1">
+                  <span className="text-[9px] font-semibold text-slate-500 block">Ano</span>
+                  <input
+                    type="number"
+                    value={selectedYear}
+                    onChange={(e) => setSelectedYear(Number(e.target.value))}
+                    disabled={isUploading || isSavingManual}
+                    min="2000"
+                    max="2100"
+                    className="w-full px-2 py-1.5 bg-slate-950 border border-slate-850 rounded-lg text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500/30 text-center"
+                  />
                 </div>
-              ) : (
-                <div className="space-y-2">
-                  <Upload className="text-slate-500 mx-auto" size={24} />
-                  <div>
-                    <p className="text-xs font-bold text-slate-300">Arraste ou clique para carregar</p>
-                    <p className="text-[10px] text-slate-500">Planilha Excel (.xlsx) ou CSV</p>
+                <div className="space-y-1">
+                  <span className="text-[9px] font-semibold text-slate-500 block">Mês</span>
+                  <select
+                    value={selectedMonth}
+                    onChange={(e) => setSelectedMonth(Number(e.target.value))}
+                    disabled={isUploading || isSavingManual}
+                    className="w-full px-2 py-1.5 bg-slate-950 border border-slate-850 rounded-lg text-xs text-slate-200 focus:outline-none"
+                  >
+                    {[
+                      { value: 0, label: 'Janeiro' },
+                      { value: 1, label: 'Fevereiro' },
+                      { value: 2, label: 'Março' },
+                      { value: 3, label: 'Abril' },
+                      { value: 4, label: 'Maio' },
+                      { value: 5, label: 'Junho' },
+                      { value: 6, label: 'Julho' },
+                      { value: 7, label: 'Agosto' },
+                      { value: 8, label: 'Setembro' },
+                      { value: 9, label: 'Outubro' },
+                      { value: 10, label: 'Novembro' },
+                      { value: 11, label: 'Dezembro' }
+                    ].map(m => (
+                      <option key={m.value} value={m.value}>{m.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <span className="text-[9px] font-semibold text-slate-500 block">Semana</span>
+                  <select
+                     value={selectedWeekOfMonth}
+                     onChange={(e) => setSelectedWeekOfMonth(Number(e.target.value))}
+                     disabled={isUploading || isSavingManual}
+                     className="w-full px-2 py-1.5 bg-slate-950 border border-slate-850 rounded-lg text-xs text-slate-200 focus:outline-none"
+                  >
+                    {[1, 2, 3, 4, 5].map(w => (
+                      <option key={w} value={w}>Semana {w}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            {uploadMode === 'file' ? (
+              /* Dropzone para planilha */
+              <div
+                onDragEnter={handleDrag}
+                onDragOver={handleDrag}
+                onDragLeave={handleDrag}
+                onDrop={handleDrop}
+                onClick={() => document.getElementById('file-input')?.click()}
+                className={`p-6 border border-dashed rounded-xl flex flex-col items-center justify-center text-center cursor-pointer transition-all ${
+                  dragActive 
+                    ? 'border-blue-500 bg-blue-950/15' 
+                    : 'border-slate-850 hover:border-slate-700 bg-slate-950/40 hover:bg-slate-950/60'
+                }`}
+              >
+                <input
+                  id="file-input"
+                  type="file"
+                  accept=".xlsx,.csv"
+                  className="hidden"
+                  onChange={(e) => {
+                    if (e.target.files && e.target.files[0]) {
+                      handleFileUpload(e.target.files[0]);
+                    }
+                  }}
+                  disabled={isUploading}
+                />
+
+                {isUploading ? (
+                  <div className="space-y-2 py-2">
+                    <RefreshCw className="animate-spin text-emerald-400 mx-auto" size={24} />
+                    <p className="text-xs font-bold text-slate-300">Auditando Planilha...</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <Upload className="text-slate-500 mx-auto" size={24} />
+                    <div>
+                      <p className="text-xs font-bold text-slate-300">Arraste ou clique para carregar</p>
+                      <p className="text-[10px] text-slate-500">Planilha Excel (.xlsx) ou CSV</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              /* Formulário manual */
+              <form onSubmit={handleSaveManualReport} className="space-y-3 pt-1">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="block text-[9px] font-bold text-slate-500 uppercase">Treinamentos Concluídos</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={treinamentosConcluidos}
+                      onChange={(e) => setTreinamentosConcluidos(e.target.value)}
+                      placeholder="0"
+                      disabled={isSavingManual}
+                      className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-850 rounded-xl text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-emerald-500/50"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="block text-[9px] font-bold text-slate-500 uppercase">Total Treinamentos</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={totalTreinamentos}
+                      onChange={(e) => setTotalTreinamentos(e.target.value)}
+                      placeholder="0"
+                      disabled={isSavingManual}
+                      className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-850 rounded-xl text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-emerald-500/50"
+                    />
                   </div>
                 </div>
-              )}
-            </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="block text-[9px] font-bold text-slate-500 uppercase">Exames Concluídos</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={examesConcluidos}
+                      onChange={(e) => setExamesConcluidos(e.target.value)}
+                      placeholder="0"
+                      disabled={isSavingManual}
+                      className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-850 rounded-xl text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-emerald-500/50"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="block text-[9px] font-bold text-slate-500 uppercase">Total de Exames</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={totalExames}
+                      onChange={(e) => setTotalExames(e.target.value)}
+                      placeholder="0"
+                      disabled={isSavingManual}
+                      className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-850 rounded-xl text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-emerald-500/50"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block text-[9px] font-bold text-slate-500 uppercase">Observações da Semana</label>
+                  <textarea
+                    rows={2}
+                    value={manualObservations}
+                    onChange={(e) => setManualObservations(e.target.value)}
+                    placeholder="Opcional: notas sobre o desempenho na semana..."
+                    disabled={isSavingManual}
+                    className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-850 rounded-xl text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-emerald-500/50 resize-none"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={isSavingManual || !uploadRepId}
+                  className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs transition disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg shadow-emerald-950/20"
+                >
+                  {isSavingManual && <RefreshCw size={12} className="animate-spin" />}
+                  Salvar Lançamento Manual
+                </button>
+              </form>
+            )}
 
             {message && (
               <div className={`p-3 rounded-lg border flex items-start gap-2 text-xs ${
@@ -692,6 +978,27 @@ export default function DashboardPage() {
               </span>
             </div>
 
+            {/* Form de Criação de Representante */}
+            <form onSubmit={handleCreateRep} className="flex gap-2">
+              <input
+                type="text"
+                value={newRepName}
+                onChange={(e) => setNewRepName(e.target.value)}
+                placeholder="Nome do perfil..."
+                required
+                disabled={isCreatingRep}
+                className="flex-1 px-3 py-1.5 bg-slate-950 border border-slate-850 rounded-xl text-xs text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500/50 placeholder-slate-700 disabled:opacity-50"
+              />
+              <button
+                type="submit"
+                disabled={isCreatingRep || !newRepName.trim()}
+                className="px-3 py-1.5 bg-gradient-to-r from-blue-600 to-emerald-600 hover:from-blue-500 hover:to-emerald-500 text-white rounded-xl text-xs font-bold transition flex items-center gap-1 disabled:opacity-50"
+              >
+                {isCreatingRep ? <Loader2 size={12} className="animate-spin" /> : <PlusCircle size={12} />}
+                Criar
+              </button>
+            </form>
+
             <div className="space-y-2 max-h-[380px] overflow-y-auto pr-1 custom-scrollbar">
               {representatives.length > 0 ? (
                 representatives.map((rep) => {
@@ -702,18 +1009,18 @@ export default function DashboardPage() {
                       onClick={() => setSelectedRepId(rep.id)}
                       className={`p-3 border rounded-xl flex items-center justify-between cursor-pointer transition ${
                         isSelected 
-                          ? 'border-emerald-500/50 bg-emerald-950/10 text-slate-100 shadow-md' 
+                          ? 'border-blue-500/50 bg-gradient-to-r from-blue-950/20 to-emerald-950/20 text-slate-100 shadow-md ring-1 ring-emerald-500/30' 
                           : 'border-slate-850 hover:border-slate-800 bg-slate-950/40 hover:bg-slate-950/60 text-slate-400'
                       }`}
                     >
                       <div className="flex items-center gap-2.5 min-w-0">
-                        <div className={`p-1.5 rounded-lg ${isSelected ? 'bg-emerald-950/30 text-emerald-400' : 'bg-slate-900 text-slate-500'}`}>
+                        <div className={`p-1.5 rounded-lg ${isSelected ? 'bg-blue-950/30 text-blue-400' : 'bg-slate-900 text-slate-500'}`}>
                           <User size={14} />
                         </div>
                         <div className="flex flex-col min-w-0">
                           <span className="text-xs font-bold truncate">{rep.nome}</span>
-                          {userRole === 'admin' && rep.supervisor_email && (
-                            <span className="text-[9px] text-slate-500 truncate">{rep.supervisor_email}</span>
+                          {userRole === 'admin' && (rep.supervisorEmail || rep.supervisor_email) && (
+                            <span className="text-[9px] text-slate-500 truncate">{rep.supervisorEmail || rep.supervisor_email}</span>
                           )}
                         </div>
                       </div>
@@ -732,8 +1039,8 @@ export default function DashboardPage() {
                   );
                 })
               ) : (
-                <div className="text-center py-6 text-xs text-slate-600">
-                  Nenhum representante cadastrado. Faça o upload de uma planilha para começar.
+                <div className="text-center py-6 text-xs text-slate-650">
+                  Nenhum representante cadastrado. Digite o nome de um perfil acima para criá-lo.
                 </div>
               )}
             </div>
@@ -747,11 +1054,11 @@ export default function DashboardPage() {
               
               {/* CARD RESUMO DE PERFIL */}
               <div className="p-6 bg-slate-900/50 backdrop-blur-md border border-slate-800 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-6 shadow-xl relative overflow-hidden">
-                <div className="absolute top-0 right-0 w-48 h-48 bg-emerald-950/5 rounded-full blur-3xl" />
+                <div className="absolute top-0 right-0 w-48 h-48 bg-blue-950/10 rounded-full blur-3xl" />
                 <div className="space-y-1.5">
                   <div className="flex items-center gap-2.5">
                     <h2 className="text-xl font-black text-slate-100">{activeRep.nome}</h2>
-                    <span className="px-2 py-0.5 border border-emerald-900/30 bg-emerald-950/30 text-emerald-400 text-[10px] font-bold rounded-full">
+                    <span className="px-2 py-0.5 border border-blue-900/30 bg-blue-950/30 text-blue-400 text-[10px] font-bold rounded-full">
                       Perfil Ativo
                     </span>
                   </div>
@@ -763,12 +1070,12 @@ export default function DashboardPage() {
                 <div className="flex items-center gap-8 bg-slate-950/60 border border-slate-850 p-4 rounded-xl">
                   <div className="text-center">
                     <div className="text-2xl font-black text-emerald-400">{averageAproveitamento}%</div>
-                    <div className="text-[9px] uppercase font-bold text-slate-500 tracking-wider">Aproveitamento Médio</div>
+                    <div className="text-[9px] uppercase font-bold text-slate-550 tracking-wider">Aproveitamento Médio</div>
                   </div>
                   <div className="h-8 w-px bg-slate-850" />
                   <div className="text-center">
                     <div className="text-2xl font-black text-blue-400">{activeRep.meta_aproveitamento}%</div>
-                    <div className="text-[9px] uppercase font-bold text-slate-500 tracking-wider">Meta Definida</div>
+                    <div className="text-[9px] uppercase font-bold text-slate-550 tracking-wider">Meta Definida</div>
                   </div>
                 </div>
               </div>
@@ -779,8 +1086,8 @@ export default function DashboardPage() {
                   onClick={() => setActiveTab('evolution')}
                   className={`px-4 py-2 text-xs font-bold flex items-center gap-2 border-b-2 transition -mb-px ${
                     activeTab === 'evolution'
-                      ? 'border-emerald-500 text-slate-100'
-                      : 'border-transparent text-slate-400 hover:text-slate-200'
+                      ? 'border-blue-500 text-blue-405'
+                      : 'border-transparent text-slate-450 hover:text-slate-200'
                   }`}
                 >
                   <TrendingUp size={14} />
@@ -790,8 +1097,8 @@ export default function DashboardPage() {
                   onClick={() => setActiveTab('comparison')}
                   className={`px-4 py-2 text-xs font-bold flex items-center gap-2 border-b-2 transition -mb-px ${
                     activeTab === 'comparison'
-                      ? 'border-emerald-500 text-slate-100'
-                      : 'border-transparent text-slate-400 hover:text-slate-200'
+                      ? 'border-blue-500 text-blue-405'
+                      : 'border-transparent text-slate-450 hover:text-slate-200'
                   }`}
                 >
                   <BarChart3 size={14} />
@@ -801,8 +1108,8 @@ export default function DashboardPage() {
                   onClick={() => setActiveTab('dossier')}
                   className={`px-4 py-2 text-xs font-bold flex items-center gap-2 border-b-2 transition -mb-px ${
                     activeTab === 'dossier'
-                      ? 'border-emerald-500 text-slate-100'
-                      : 'border-transparent text-slate-400 hover:text-slate-200'
+                      ? 'border-blue-500 text-blue-405'
+                      : 'border-transparent text-slate-450 hover:text-slate-200'
                   }`}
                 >
                   <ClipboardList size={14} />
@@ -813,11 +1120,11 @@ export default function DashboardPage() {
                     onClick={() => setActiveTab('admin')}
                     className={`px-4 py-2 text-xs font-bold flex items-center gap-2 border-b-2 transition -mb-px ${
                       activeTab === 'admin'
-                        ? 'border-emerald-500 text-slate-100'
-                        : 'border-transparent text-slate-400 hover:text-slate-200'
+                        ? 'border-blue-500 text-blue-405'
+                        : 'border-transparent text-slate-450 hover:text-slate-200'
                     }`}
                   >
-                    <Shield size={14} className="text-teal-400" />
+                    <Shield size={14} className="text-blue-400" />
                     Painel Admin (Supervisores)
                   </button>
                 )}
@@ -829,8 +1136,8 @@ export default function DashboardPage() {
                   
                   {/* GRÁFICO */}
                   <div className="p-5 bg-slate-900/50 border border-slate-800 rounded-2xl space-y-4 shadow-xl">
-                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                      <TrendingUp size={14} className="text-emerald-400" />
+                    <h3 className="text-xs font-bold text-slate-450 uppercase tracking-wider flex items-center gap-1.5">
+                      <TrendingUp size={14} className="text-blue-400" />
                       Histórico Semanal de Aproveitamento
                     </h3>
                     <div className="h-60 w-full">
@@ -844,21 +1151,20 @@ export default function DashboardPage() {
                               contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px' }}
                               labelStyle={{ color: '#94a3b8', fontWeight: 'bold' }}
                             />
-                            <Legend wrapperStyle={{ fontSize: '10px' }} />
                             <Line 
                               type="monotone" 
                               dataKey="Aproveitamento" 
                               name="Aproveitamento"
-                              stroke="#10b981" 
+                              stroke="#3b82f6" 
                               strokeWidth={3}
                               activeDot={{ r: 6 }} 
                             />
-                            <ReferenceLine y={activeRep.meta_aproveitamento} label={{ value: `Meta (${activeRep.meta_aproveitamento}%)`, fill: '#ef4444', fontSize: 10, position: 'top' }} stroke="#ef4444" strokeDasharray="3 3" />
+                            <ReferenceLine y={activeRep.meta_aproveitamento} label={{ value: `Meta (${activeRep.meta_aproveitamento}%)`, fill: '#10b981', fontSize: 10, position: 'top' }} stroke="#10b981" strokeDasharray="3 3" />
                           </LineChart>
                         </ResponsiveContainer>
                       ) : (
-                        <div className="h-full flex items-center justify-center text-slate-500 text-xs">
-                          Carregue planilhas para gerar o gráfico histórico.
+                        <div className="h-full flex items-center justify-center text-slate-500 text-xs text-center px-4 leading-relaxed">
+                          Nenhum relatório semanal importado. Vincule e envie uma planilha para gerar o gráfico histórico.
                         </div>
                       )}
                     </div>
@@ -930,8 +1236,8 @@ export default function DashboardPage() {
                               })
                             ) : (
                               <tr>
-                                <td colSpan={3} className="py-8 text-center text-slate-500 text-[11px]">
-                                  Nenhum histórico semanal disponível.
+                                <td colSpan={3} className="py-8 text-center text-slate-550 text-[11px]">
+                                  Este representante ainda não possui relatórios semanais cadastrados.
                                 </td>
                               </tr>
                             )}
@@ -987,8 +1293,12 @@ export default function DashboardPage() {
                           </div>
                         </div>
                       ) : (
-                        <div className="h-full flex items-center justify-center text-center py-10 text-slate-500 text-xs">
-                          Selecione uma semana ao lado para ver os cursos.
+                        <div className="h-full flex flex-col items-center justify-center text-center py-10 text-slate-500 text-xs space-y-2">
+                          <Calendar size={24} className="text-slate-700 animate-pulse" />
+                          <p className="font-bold text-slate-400">Sem Relatórios</p>
+                          <p className="text-[10px] text-slate-500 max-w-[200px] leading-relaxed">
+                            Selecione este representante no painel de upload à esquerda e envie uma planilha.
+                          </p>
                         </div>
                       )}
                     </div>
@@ -1004,7 +1314,7 @@ export default function DashboardPage() {
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-4">
                     <div>
                       <h3 className="text-xs font-bold text-slate-200 uppercase tracking-wider flex items-center gap-1.5">
-                        <BarChart3 size={14} className="text-emerald-400" />
+                        <BarChart3 size={14} className="text-blue-400" />
                         Comparador Week-over-Week
                       </h3>
                       <p className="text-[10px] text-slate-400 mt-0.5">Selecione duas semanas para comparar o avanço dos cursos</p>
@@ -1076,8 +1386,14 @@ export default function DashboardPage() {
                       </table>
                     </div>
                   ) : (
-                    <div className="py-12 text-center text-slate-500 text-xs">
-                      Por favor, selecione duas semanas diferentes no menu acima para auditar o progresso comparativo.
+                    <div className="py-12 flex flex-col items-center justify-center text-center text-slate-500 text-xs space-y-2">
+                      <BarChart3 size={32} className="text-slate-700" />
+                      <p className="font-bold text-slate-400">Comparação Indisponível</p>
+                      <p className="text-[10px] text-slate-600 max-w-[250px] leading-relaxed">
+                        {weeklyReports.length === 0 
+                          ? 'É necessário que o representante possua pelo menos dois relatórios semanais carregados para habilitar a comparação.' 
+                          : 'Por favor, selecione duas semanas diferentes no menu acima para auditar o progresso comparativo.'}
+                      </p>
                     </div>
                   )}
 
@@ -1090,7 +1406,7 @@ export default function DashboardPage() {
                   
                   <div>
                     <h3 className="text-xs font-bold text-slate-200 uppercase tracking-wider flex items-center gap-1.5">
-                      <ClipboardList size={14} className="text-emerald-400" />
+                      <ClipboardList size={14} className="text-blue-400" />
                       Dossiê Qualitativo de Desempenho
                     </h3>
                     <p className="text-[10px] text-slate-400 mt-0.5">Registre comentários qualitativos, feedbacks e defina metas de aproveitamento.</p>

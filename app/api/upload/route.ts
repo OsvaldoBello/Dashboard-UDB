@@ -38,11 +38,13 @@ export async function POST(request: Request) {
     // 2. Extrair dados da Requisição
     const formData = await request.formData();
     const file = formData.get('file') as File | null;
-    const weekStr = formData.get('week') as string | null; // Formato: YYYY-Www
+    const weekStr = formData.get('week') as string | null; // Formato: YYYY-Www ou YYYY-MM-DD
+    const representanteIdRaw = formData.get('representanteId') as string | null;
+    const representanteIdFromClient = (representanteIdRaw && representanteIdRaw !== 'null' && representanteIdRaw !== 'undefined') ? representanteIdRaw : null;
 
     if (!file || !weekStr) {
       return NextResponse.json(
-        { error: 'Arquivo e semana de referência são obrigatórios.' },
+        { error: 'Arquivo e referência temporal são obrigatórios.' },
         { status: 400 }
       );
     }
@@ -139,54 +141,82 @@ export async function POST(request: Request) {
     const completedAll = completedContents + completedExams;
     const aproveitamentoGeral = totalAll > 0 ? parseFloat(((completedAll / totalAll) * 100).toFixed(2)) : 0.00;
 
-    // 5. Determinar Nome do Representante baseado no Arquivo
-    let repName = file.name;
-    const dotIndex = repName.lastIndexOf('.');
-    if (dotIndex !== -1) {
-      repName = repName.substring(0, dotIndex);
-    }
-    // Remove prefixos comuns de timestamps e identificadores
-    repName = repName.replace(/^\d+_[a-zA-Z0-9]+_/g, '').replace(/_representante$/i, '').replace(/representante$/i, '').trim();
-    // Capitalizar
-    repName = repName.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+    // 5. Determinar Nome do Representante e ID
+    let finalRepresentanteId: string;
+    let repName = '';
 
-    // 6. Gravar ou Atualizar no Supabase
-    // Buscar ou cadastrar representante
-    let { data: representante, error: repSelectError } = await supabase
-      .from('representantes')
-      .select('id')
-      .eq('nome', repName)
-      .eq('usuario_id', usuarioId)
-      .maybeSingle();
-
-    if (repSelectError) {
-      throw new Error(`Erro ao verificar representante: ${repSelectError.message}`);
-    }
-
-    let representanteId: string;
-    if (!representante) {
-      const { data: newRep, error: repInsertError } = await supabase
+    if (representanteIdFromClient) {
+      // Obter representante do banco e validar ownership para evitar IDOR
+      const { data: rep, error: repError } = await supabase
         .from('representantes')
-        .insert({ nome: repName, usuario_id: usuarioId })
-        .select('id')
-        .single();
+        .select('id, nome')
+        .eq('id', representanteIdFromClient)
+        .eq('usuario_id', usuarioId)
+        .maybeSingle();
 
-      if (repInsertError) {
-        throw new Error(`Erro ao inserir representante: ${repInsertError.message}`);
+      if (repError || !rep) {
+        return NextResponse.json(
+          { error: 'Representante não encontrado ou não pertence a este usuário.' },
+          { status: 400 }
+        );
       }
-      representanteId = newRep.id;
+      finalRepresentanteId = rep.id;
+      repName = rep.nome;
     } else {
-      representanteId = representante.id;
+      // Fallback/Legacy behavior: parse from file name
+      let parsedRepName = file.name;
+      const dotIndex = parsedRepName.lastIndexOf('.');
+      if (dotIndex !== -1) {
+        parsedRepName = parsedRepName.substring(0, dotIndex);
+      }
+      // Remove prefixos comuns de timestamps e identificadores
+      parsedRepName = parsedRepName.replace(/^\d+_[a-zA-Z0-9]+_/g, '').replace(/_representante$/i, '').replace(/representante$/i, '').trim();
+      // Capitalizar
+      parsedRepName = parsedRepName.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+      repName = parsedRepName;
+
+      // Buscar ou cadastrar representante
+      let { data: representante, error: repSelectError } = await supabase
+        .from('representantes')
+        .select('id')
+        .eq('nome', repName)
+        .eq('usuario_id', usuarioId)
+        .maybeSingle();
+
+      if (repSelectError) {
+        throw new Error(`Erro ao verificar representante: ${repSelectError.message}`);
+      }
+
+      if (!representante) {
+        const { data: newRep, error: repInsertError } = await supabase
+          .from('representantes')
+          .insert({ nome: repName, usuario_id: usuarioId })
+          .select('id')
+          .single();
+
+        if (repInsertError) {
+          throw new Error(`Erro ao inserir representante: ${repInsertError.message}`);
+        }
+        finalRepresentanteId = newRep.id;
+      } else {
+        finalRepresentanteId = representante.id;
+      }
     }
 
-    // Gravar/Upsert relatório semanal do representante
-    const mondayDate = getMondayOfISOWeek(weekStr);
-    const semanaReferencia = mondayDate.toISOString().split('T')[0]; // Data formatada: YYYY-MM-DD
+    // 6. Gravar ou Atualizar Relatório Semanal
+    let semanaReferencia: string;
+    if (weekStr.includes('-W')) {
+      const mondayDate = getMondayOfISOWeek(weekStr);
+      semanaReferencia = mondayDate.toISOString().split('T')[0];
+    } else {
+      // Já está no formato YYYY-MM-DD
+      semanaReferencia = weekStr;
+    }
     
     const { error: reportError } = await supabase
       .from('relatorios_semanais')
       .upsert({
-        representante_id: representanteId,
+        representante_id: finalRepresentanteId,
         semana_ano: semanaReferencia,
         total_treinamentos: totalContents,
         treinamentos_concluidos: completedContents,

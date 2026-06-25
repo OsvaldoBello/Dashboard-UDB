@@ -71,8 +71,9 @@ ALTER TABLE public.representantes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.relatorios_semanais ENABLE ROW LEVEL SECURITY;
 
 -- 4. POLÍTICAS PARA A TABELA PERFIS
-CREATE POLICY "Permitir leitura de perfis para autenticados" 
-ON public.perfis FOR SELECT TO authenticated USING (true);
+CREATE POLICY "Permitir leitura de perfis para o próprio usuário ou administradores" 
+ON public.perfis FOR SELECT TO authenticated 
+USING (auth.uid() = id OR EXISTS (SELECT 1 FROM public.perfis WHERE id = auth.uid() AND role = 'admin'));
 
 CREATE POLICY "Permitir atualização do próprio perfil ou por administradores" 
 ON public.perfis FOR UPDATE TO authenticated 

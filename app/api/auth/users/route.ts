@@ -70,6 +70,25 @@ export async function DELETE(request: Request) {
     // Instanciar cliente admin que possui permissão bypass RLS e privilégio gotrue:admin
     const supabaseAdmin = createSupabaseAdminClient();
 
+    // Impedir auto-exclusão e exclusão de outros administradores
+    if (targetUserId === authResult.user.id) {
+      return NextResponse.json({ error: 'Não é permitido excluir a própria conta.' }, { status: 400 });
+    }
+
+    const { data: targetProfile, error: targetProfileError } = await supabaseAdmin
+      .from('perfis')
+      .select('role')
+      .eq('id', targetUserId)
+      .maybeSingle();
+
+    if (targetProfileError || !targetProfile) {
+      return NextResponse.json({ error: 'Usuário não encontrado.' }, { status: 404 });
+    }
+
+    if (targetProfile.role === 'admin') {
+      return NextResponse.json({ error: 'Não é permitido excluir administradores.' }, { status: 403 });
+    }
+
     // Deletar o usuário no Auth (isso dispara o DELETE ON CASCADE na tabela perfis e relatórios)
     const { error: deleteError } = await supabaseAdmin.auth.admin.deleteUser(targetUserId);
 

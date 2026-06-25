@@ -50,3 +50,47 @@ export async function PATCH(request: Request) {
     );
   }
 }
+
+export async function POST(request: Request) {
+  try {
+    const supabase = await createSupabaseServerClient();
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Acesso não autorizado.' }, { status: 401 });
+    }
+
+    const body = await request.json();
+    const { nome, meta_aproveitamento } = body;
+
+    if (!nome || !nome.trim()) {
+      return NextResponse.json({ error: 'O nome do representante é obrigatório.' }, { status: 400 });
+    }
+
+    const { data, error } = await supabase
+      .from('representantes')
+      .insert({
+        nome: nome.trim(),
+        meta_aproveitamento: meta_aproveitamento !== undefined ? parseFloat(meta_aproveitamento) : 80.00,
+        usuario_id: user.id
+      })
+      .select()
+      .single();
+
+    if (error) {
+      if (error.code === '23505') { // unique constraint violation
+        return NextResponse.json({ error: 'Já existe um representante com este nome.' }, { status: 400 });
+      }
+      throw new Error(error.message);
+    }
+
+    return NextResponse.json({ success: true, data });
+  } catch (err: any) {
+    console.error('Erro ao criar representante:', err);
+    return NextResponse.json(
+      { error: err.message || 'Não foi possível criar o representante.' },
+      { status: 500 }
+    );
+  }
+}
+
