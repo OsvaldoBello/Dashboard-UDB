@@ -8,9 +8,11 @@ import {
   Upload, Calendar, FileSpreadsheet, LogOut, CheckCircle2, 
   AlertCircle, Trash2, Eye, BookOpen, Award, TrendingUp, RefreshCw,
   User, Users, Target, Save, FileText, BarChart3, ArrowRight, ClipboardList,
-  PlusCircle, Trash, Lock, Key, X, Sliders, Shield, Loader2
+  PlusCircle, Trash, Lock, Key, X, Sliders, Shield, Loader2,
+  Sun, Moon, Download
 } from 'lucide-react';
 import { createSupabaseBrowserClient } from '@/lib/supabase-client';
+import * as XLSX from 'xlsx';
 import { 
   LineChart, Line, XAxis, YAxis, CartesianGrid, 
   Tooltip, Legend, ResponsiveContainer, ReferenceLine
@@ -73,11 +75,9 @@ export default function DashboardPage() {
   const [representatives, setRepresentatives] = useState<Representative[]>([]);
   const [selectedRepId, setSelectedRepId] = useState<string | null>(null);
   const [weeklyReports, setWeeklyReports] = useState<WeeklyReport[]>([]);
-  const [activeTab, setActiveTab] = useState<'evolution' | 'comparison' | 'dossier' | 'admin'>('evolution');
+  const [activeTab, setActiveTab] = useState<'evolution' | 'comparison' | 'dossier' | 'admin' | 'export'>('evolution');
 
-  // Estados de Criação de Representante
-  const [newRepName, setNewRepName] = useState('');
-  const [isCreatingRep, setIsCreatingRep] = useState(false);
+
 
   // Estados Admin
   const [userRole, setUserRole] = useState<'admin' | 'supervisor' | null>(null);
@@ -98,6 +98,8 @@ export default function DashboardPage() {
 
   // Estados de Upload
   const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<{ current: number; total: number; fileName: string } | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const [uploadMode, setUploadMode] = useState<'file' | 'manual'>('file');
@@ -107,6 +109,9 @@ export default function DashboardPage() {
   const [examesConcluidos, setExamesConcluidos] = useState<string>('');
   const [manualObservations, setManualObservations] = useState<string>('');
   const [isSavingManual, setIsSavingManual] = useState(false);
+  
+  // Tema Claro/Escuro
+  const [theme, setTheme] = useState<'light' | 'dark'>('dark');
 
   // Estados de Alteração de Senha
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
@@ -363,6 +368,73 @@ export default function DashboardPage() {
     }
   }, [selectedRepId]);
 
+  // Inicialização e gerenciamento de Tema Claro/Escuro
+  useEffect(() => {
+    const savedTheme = localStorage.getItem('theme') as 'light' | 'dark' | null;
+    if (savedTheme) {
+      setTheme(savedTheme);
+      if (savedTheme === 'dark') {
+        document.documentElement.classList.add('dark');
+      } else {
+        document.documentElement.classList.remove('dark');
+      }
+    } else {
+      document.documentElement.classList.add('dark');
+    }
+  }, []);
+
+  const toggleTheme = () => {
+    const nextTheme = theme === 'dark' ? 'light' : 'dark';
+    setTheme(nextTheme);
+    localStorage.setItem('theme', nextTheme);
+    if (nextTheme === 'dark') {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  };
+
+  const handleDownloadComparison = () => {
+    if (comparisonData.length === 0 || !activeRep) return;
+
+    try {
+      // 1. Criar dados formatados para a planilha
+      const rows = comparisonData.map(row => ({
+        'Nome do Treinamento / Exame': row.nome,
+        'Status (Semana Base)': row.statusA,
+        'Progresso (Semana Base)': row.progressoA,
+        'Status (Semana Foco)': row.statusB,
+        'Progresso (Semana Foco)': row.progressoB,
+        'Status de Avanço': row.status
+      }));
+
+      // 2. Criar workbook
+      const worksheet = XLSX.utils.json_to_sheet(rows);
+      const workbook = XLSX.utils.book_new();
+
+      // Definir larguras de colunas
+      worksheet['!cols'] = [
+        { wch: 45 }, // Nome do Treinamento
+        { wch: 25 }, // Status Base
+        { wch: 25 }, // Progresso Base
+        { wch: 25 }, // Status Foco
+        { wch: 25 }, // Progresso Foco
+        { wch: 30 }, // Status de Avanço
+      ];
+
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Comparação de Semanas');
+
+      // Nome do arquivo
+      const safeRepName = activeRep.nome.replace(/\s+/g, '_');
+      const fileName = `Comparativo_${safeRepName}_${compareWeekA}_vs_${compareWeekB}.xlsx`;
+
+      XLSX.writeFile(workbook, fileName);
+    } catch (err) {
+      console.error('Erro ao gerar planilha comparativa:', err);
+      alert('Não foi possível gerar a planilha de comparação.');
+    }
+  };
+
   // Data de referência calculada
   const computedDateString = useMemo(() => {
     const day = (selectedWeekOfMonth - 1) * 7 + 1;
@@ -372,71 +444,298 @@ export default function DashboardPage() {
     return `${y}-${m}-${d}`;
   }, [selectedYear, selectedMonth, selectedWeekOfMonth]);
 
-  // Função de criação manual de representante
-  const handleCreateRep = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newRepName.trim()) return;
-    setIsCreatingRep(true);
+  // Upload de arquivos
+  const handleFileUpload = async (files: FileList | File[]) => {
+    setIsUploading(true);
+    setUploadProgress(null);
     setMessage(null);
-    try {
-      const response = await fetch('/api/representantes', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ nome: newRepName.trim() }),
+
+    const fileArray = Array.from(files);
+    let successCount = 0;
+    let failCount = 0;
+    let lastRepId = null;
+
+    for (let i = 0; i < fileArray.length; i++) {
+      const file = fileArray[i];
+      setUploadProgress({
+        current: i + 1,
+        total: fileArray.length,
+        fileName: file.name
       });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || 'Falha ao criar o perfil do representante.');
+
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('week', computedDateString);
+
+      try {
+        const response = await fetch('/api/upload', {
+          method: 'POST',
+          body: formData,
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.error || 'Falha ao processar o arquivo.');
+        }
+
+        successCount++;
+        if (data.data?.representanteId) {
+          lastRepId = data.data.representanteId;
+        }
+      } catch (err: any) {
+        console.error(`Erro ao processar ${file.name}:`, err);
+        failCount++;
       }
-      setMessage({ type: 'success', text: `Perfil do representante "${newRepName.trim()}" criado com sucesso!` });
-      setNewRepName('');
-      
+    }
+
+    setUploadProgress(null);
+    setIsUploading(false);
+
+    if (successCount > 0) {
       await loadInitialData();
-      if (data.data?.id) {
-        setSelectedRepId(data.data.id);
-        setUploadRepId(data.data.id);
+      if (lastRepId) {
+        setSelectedRepId(lastRepId);
+        setUploadRepId(lastRepId);
+        await loadRepresentativeReports(lastRepId);
       }
-    } catch (err: any) {
-      setMessage({ type: 'error', text: err.message || 'Erro inesperado.' });
-    } finally {
-      setIsCreatingRep(false);
+    }
+
+    if (fileArray.length === 1) {
+      if (successCount === 1) {
+        setMessage({ type: 'success', text: `Planilha importada com sucesso!` });
+      } else {
+        setMessage({ type: 'error', text: `Falha ao processar o arquivo.` });
+      }
+    } else {
+      if (failCount === 0) {
+        setMessage({ type: 'success', text: `Processamento concluído: ${successCount} planilhas importadas com sucesso!` });
+      } else if (successCount > 0) {
+        setMessage({ type: 'success', text: `Processamento parcial: ${successCount} planilhas importadas, ${failCount} falhas.` });
+      } else {
+        setMessage({ type: 'error', text: `Falha ao processar as ${failCount} planilhas selecionadas.` });
+      }
     }
   };
 
-  // Upload de arquivos
-  const handleFileUpload = async (file: File) => {
-    if (!uploadRepId) {
-      setMessage({ type: 'error', text: 'Selecione ou crie um representante para vincular o upload.' });
-      return;
-    }
-    setIsUploading(true);
+  // Exportar todos os representantes consolidado em um único Excel
+  const handleExportConsolidatedExcel = async () => {
+    setIsExporting(true);
     setMessage(null);
-
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('week', computedDateString);
-    formData.append('representanteId', uploadRepId);
-
     try {
-      const response = await fetch('/api/upload', {
-        method: 'POST',
-        body: formData,
-      });
+      const { data: reps, error: repsError } = await supabase
+        .from('representantes')
+        .select('id, nome, meta_aproveitamento')
+        .order('nome');
 
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || 'Falha ao processar o arquivo.');
+      if (repsError) throw repsError;
+      if (!reps || reps.length === 0) {
+        throw new Error('Nenhum representante cadastrado para exportar.');
       }
 
-      setMessage({ type: 'success', text: `Planilha de ${data.data.representante} importada com sucesso!` });
-      
-      await loadInitialData();
-      await loadRepresentativeReports(uploadRepId);
+      const { data: reports, error: reportsError } = await supabase
+        .from('relatorios_semanais')
+        .select('*')
+        .order('semana_ano', { ascending: false });
+
+      if (reportsError) throw reportsError;
+
+      const summaryRows = reps.map(rep => {
+        const repReports = (reports || []).filter(r => r.representante_id === rep.id);
+        const latestReport = repReports[0] || null;
+
+        return {
+          'Representante': rep.nome,
+          'Última Semana Ativa': latestReport ? formatISOWeekDisplay(latestReport.semana_ano) : 'Sem dados',
+          'Treinamentos Concluídos': latestReport ? `${latestReport.treinamentos_concluidos} de ${latestReport.total_treinamentos}` : '0 de 0',
+          'Exames Concluídos': latestReport ? `${latestReport.exames_concluidos} de ${latestReport.total_exames}` : '0 de 0',
+          'Aproveitamento Geral (%)': latestReport ? `${latestReport.aproveitamento_geral.toFixed(1)}%` : '0.0%',
+          'Meta Definida (%)': `${rep.meta_aproveitamento}%`,
+          'Status da Meta': latestReport 
+            ? (latestReport.aproveitamento_geral >= rep.meta_aproveitamento ? 'Meta Atingida' : 'Abaixo da Meta') 
+            : 'Sem dados'
+        };
+      });
+
+      const historyRows = (reports || []).map(r => {
+        const rep = reps.find(rep => rep.id === r.representante_id);
+        return {
+          'Representante': rep ? rep.nome : 'Desconhecido',
+          'Semana (Referência)': formatISOWeekDisplay(r.semana_ano),
+          'Treinamentos Concluídos': r.treinamentos_concluidos,
+          'Total Treinamentos': r.total_treinamentos,
+          'Exames Concluídos': r.exames_concluidos,
+          'Total Exames': r.total_exames,
+          'Aproveitamento Geral (%)': r.aproveitamento_geral,
+          'Meta (%)': rep ? rep.meta_aproveitamento : 80,
+          'Observações': r.observacoes || ''
+        };
+      });
+
+      const wb = XLSX.utils.book_new();
+
+      const wsSummary = XLSX.utils.json_to_sheet(summaryRows);
+      wsSummary['!cols'] = [
+        { wch: 30 },
+        { wch: 25 },
+        { wch: 25 },
+        { wch: 20 },
+        { wch: 25 },
+        { wch: 20 },
+        { wch: 20 }
+      ];
+      XLSX.utils.book_append_sheet(wb, wsSummary, 'Resumo Diretoria');
+
+      if (historyRows.length > 0) {
+        const wsHistory = XLSX.utils.json_to_sheet(historyRows);
+        wsHistory['!cols'] = [
+          { wch: 30 },
+          { wch: 25 },
+          { wch: 22 },
+          { wch: 18 },
+          { wch: 18 },
+          { wch: 15 },
+          { wch: 25 },
+          { wch: 12 },
+          { wch: 35 }
+        ];
+        XLSX.utils.book_append_sheet(wb, wsHistory, 'Histórico Consolidado');
+      }
+
+      for (const rep of reps) {
+        const repReports = (reports || []).filter(r => r.representante_id === rep.id);
+        const latestReport = repReports[0] || null;
+
+        const detailRows = (latestReport?.detalhes || []).map((d: any) => ({
+          'Treinamento / Exame': d.conteudo,
+          'Tipo': (d.conteudo.toLowerCase().endsWith('- exame') || d.conteudo.toLowerCase().includes('- exame ')) ? 'Exame' : 'Conteúdo',
+          'Progresso (%)': `${d.progresso}%`,
+          'Status': d.status
+        }));
+
+        if (detailRows.length > 0) {
+          const wsDetail = XLSX.utils.json_to_sheet(detailRows);
+          wsDetail['!cols'] = [
+            { wch: 50 },
+            { wch: 15 },
+            { wch: 15 },
+            { wch: 18 }
+          ];
+          const safeSheetName = rep.nome.replace(/[\\\/\?\*\:\[\]]/g, '').substring(0, 30);
+          XLSX.utils.book_append_sheet(wb, wsDetail, safeSheetName);
+        }
+      }
+
+      XLSX.writeFile(wb, 'Auditoria_Consolidada_UBD.xlsx');
+      setMessage({ type: 'success', text: 'Relatório consolidado exportado com sucesso!' });
     } catch (err: any) {
-      setMessage({ type: 'error', text: err.message || 'Erro inesperado no upload.' });
+      console.error('Erro ao exportar consolidado:', err);
+      setMessage({ type: 'error', text: err.message || 'Erro ao gerar o arquivo de exportação.' });
     } finally {
-      setIsUploading(false);
+      setIsExporting(false);
+    }
+  };
+
+  // Exportar cada representante em ZIP separado
+  const handleExportIndividualExcelsZip = async () => {
+    setIsExporting(true);
+    setMessage(null);
+    try {
+      const JSZip = (await import('jszip')).default;
+      const zip = new JSZip();
+
+      const { data: reps, error: repsError } = await supabase
+        .from('representantes')
+        .select('id, nome, meta_aproveitamento')
+        .order('nome');
+
+      if (repsError) throw repsError;
+      if (!reps || reps.length === 0) {
+        throw new Error('Nenhum representante cadastrado para exportar.');
+      }
+
+      const { data: reports, error: reportsError } = await supabase
+        .from('relatorios_semanais')
+        .select('*')
+        .order('semana_ano', { ascending: false });
+
+      if (reportsError) throw reportsError;
+
+      let filesAdded = 0;
+
+      for (const rep of reps) {
+        const repReports = (reports || []).filter(r => r.representante_id === rep.id);
+        if (repReports.length === 0) continue;
+
+        const repWb = XLSX.utils.book_new();
+
+        const historyRows = repReports.map(r => ({
+          'Semana (Referência)': formatISOWeekDisplay(r.semana_ano),
+          'Treinamentos Concluídos': r.treinamentos_concluidos,
+          'Total Treinamentos': r.total_treinamentos,
+          'Exames Concluídos': r.exames_concluidos,
+          'Total Exames': r.total_exames,
+          'Aproveitamento Geral (%)': r.aproveitamento_geral,
+          'Meta (%)': rep.meta_aproveitamento,
+          'Observações': r.observacoes || ''
+        }));
+
+        const wsHist = XLSX.utils.json_to_sheet(historyRows);
+        wsHist['!cols'] = [
+          { wch: 25 },
+          { wch: 22 },
+          { wch: 18 },
+          { wch: 18 },
+          { wch: 15 },
+          { wch: 25 },
+          { wch: 12 },
+          { wch: 35 }
+        ];
+        XLSX.utils.book_append_sheet(repWb, wsHist, 'Histórico');
+
+        const latestReport = repReports[0];
+        const detailRows = latestReport.detalhes.map((d: any) => ({
+          'Treinamento / Exame': d.conteudo,
+          'Tipo': (d.conteudo.toLowerCase().endsWith('- exame') || d.conteudo.toLowerCase().includes('- exame ')) ? 'Exame' : 'Conteúdo',
+          'Progresso (%)': `${d.progresso}%`,
+          'Status': d.status
+        }));
+
+        const wsDetail = XLSX.utils.json_to_sheet(detailRows);
+        wsDetail['!cols'] = [
+          { wch: 50 },
+          { wch: 15 },
+          { wch: 15 },
+          { wch: 18 }
+        ];
+        XLSX.utils.book_append_sheet(repWb, wsDetail, 'Últimos Detalhes');
+
+        const excelBuffer = XLSX.write(repWb, { bookType: 'xlsx', type: 'array' });
+        const safeName = rep.nome.replace(/\s+/g, '_').replace(/[\\\/\?\*\:\[\]]/g, '');
+        zip.file(`Relatorio_${safeName}.xlsx`, excelBuffer);
+        filesAdded++;
+      }
+
+      if (filesAdded === 0) {
+        throw new Error('Nenhum representante possui relatórios semanais cadastrados para exportar.');
+      }
+
+      const zipContent = await zip.generateAsync({ type: 'blob' });
+      const url = URL.createObjectURL(zipContent);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'Relatorios_Individuais_Representantes.zip';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      setMessage({ type: 'success', text: `Arquivo ZIP gerado com sucesso contendo ${filesAdded} relatórios!` });
+    } catch (err: any) {
+      console.error('Erro ao exportar ZIP:', err);
+      setMessage({ type: 'error', text: err.message || 'Erro ao gerar arquivos separados em ZIP.' });
+    } finally {
+      setIsExporting(false);
     }
   };
 
@@ -505,8 +804,8 @@ export default function DashboardPage() {
     e.stopPropagation();
     setDragActive(false);
 
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      handleFileUpload(e.dataTransfer.files[0]);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      handleFileUpload(e.dataTransfer.files);
     }
   };
 
@@ -635,21 +934,21 @@ export default function DashboardPage() {
       const stateB = coursesB.get(name);
 
       let status = 'Sem alteração';
-      let statusClass = 'text-slate-400 bg-slate-900/40 border-slate-900/60';
+      let statusClass = 'text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-900/40 border-slate-200 dark:border-slate-900/60';
 
       if (!stateA && stateB) {
         status = 'Novo Curso';
-        statusClass = 'text-blue-400 bg-blue-950/20 border-blue-900/30';
+        statusClass = 'text-blue-650 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/20 border-blue-200 dark:border-blue-900/30';
       } else if (stateA && !stateB) {
         status = 'Removido';
-        statusClass = 'text-red-400 bg-red-950/20 border-red-900/30';
+        statusClass = 'text-red-650 dark:text-red-400 bg-red-50 dark:bg-red-950/20 border-red-200 dark:border-red-900/30';
       } else if (stateA && stateB) {
         if (stateA.status === 'Em Andamento' && stateB.status === 'Concluído') {
           status = 'Evoluiu (Concluído)';
-          statusClass = 'text-emerald-400 bg-emerald-950/20 border-emerald-900/30';
+          statusClass = 'text-emerald-650 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-900/30';
         } else if (stateA.status === 'Concluído' && stateB.status === 'Em Andamento') {
           status = 'Regrediu';
-          statusClass = 'text-orange-400 bg-orange-950/20 border-orange-900/30';
+          statusClass = 'text-orange-650 dark:text-orange-400 bg-orange-50 dark:bg-orange-950/20 border-orange-200 dark:border-orange-900/30';
         }
       }
 
@@ -666,33 +965,40 @@ export default function DashboardPage() {
   }, [compareWeekA, compareWeekB, weeklyReports]);
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans relative overflow-hidden">
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col font-sans relative overflow-hidden transition-colors duration-200">
       {/* Glows de Fundo Ambiente */}
-      <div className="absolute top-[-10%] left-[-10%] w-[500px] h-[500px] bg-blue-500/5 rounded-full blur-[120px] pointer-events-none" />
-      <div className="absolute bottom-[-10%] right-[-10%] w-[500px] h-[500px] bg-emerald-500/5 rounded-full blur-[120px] pointer-events-none" />
+      <div className="absolute top-[-10%] left-[-10%] w-[500px] h-[500px] bg-blue-500/[0.03] dark:bg-blue-500/5 rounded-full blur-[120px] pointer-events-none" />
+      <div className="absolute bottom-[-10%] right-[-10%] w-[500px] h-[500px] bg-emerald-500/[0.03] dark:bg-emerald-500/5 rounded-full blur-[120px] pointer-events-none" />
       
       {/* 1. CABEÇALHO */}
-      <header className="border-b border-slate-900 bg-slate-900/20 backdrop-blur-xl sticky top-0 z-40">
+      <header className="border-b border-slate-200 dark:border-slate-900 bg-white/70 dark:bg-slate-900/20 backdrop-blur-xl sticky top-0 z-40 transition-colors duration-200">
         <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-teal-400 to-emerald-400">
+            <h1 className="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-600 via-teal-600 to-emerald-600 dark:from-blue-400 dark:via-teal-400 dark:to-emerald-400">
               UBD Training Tracker
             </h1>
-            <p className="text-xs text-slate-400 mt-0.5">
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
               Dossiês e Auditoria Semanal de Representantes Comerciais
             </p>
           </div>
 
           <div className="flex items-center gap-4">
             {sessionUser && (
-              <span className="text-xs text-slate-400 font-semibold border border-slate-800 bg-slate-950/60 px-3 py-1.5 rounded-lg flex items-center gap-2">
-                <User size={12} className="text-emerald-450" />
+              <span className="text-xs text-slate-600 dark:text-slate-400 font-semibold border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-950/60 px-3 py-1.5 rounded-lg flex items-center gap-2 transition-colors">
+                <User size={12} className="text-emerald-500 dark:text-emerald-400" />
                 {sessionUser.email}
               </span>
             )}
             <button
+              onClick={toggleTheme}
+              className="p-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-900/40 dark:hover:bg-slate-900/60 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-350 rounded-lg transition"
+              title="Alternar Tema"
+            >
+              {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
+            </button>
+            <button
               onClick={() => setIsPasswordModalOpen(true)}
-              className="px-3.5 py-2 bg-blue-950/15 hover:bg-blue-950/30 border border-blue-900/30 text-blue-400 hover:text-blue-300 text-xs font-bold rounded-lg flex items-center gap-2 transition"
+              className="px-3.5 py-2 bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/15 dark:hover:bg-blue-950/30 border border-blue-200 dark:border-blue-900/30 text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 text-xs font-bold rounded-lg flex items-center gap-2 transition"
               title="Alterar Senha de Acesso"
             >
               <Key size={14} />
@@ -700,7 +1006,7 @@ export default function DashboardPage() {
             </button>
             <button
               onClick={handleLogout}
-              className="px-4 py-2 bg-red-950/20 hover:bg-red-950/40 border border-red-900/30 text-red-400 hover:text-red-300 text-xs font-bold rounded-lg flex items-center gap-2 transition"
+              className="px-4 py-2 bg-red-50 hover:bg-red-100 dark:bg-red-950/20 dark:hover:bg-red-950/40 border border-red-200 dark:border-red-900/30 text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 text-xs font-bold rounded-lg flex items-center gap-2 transition"
             >
               <LogOut size={14} />
               Sair
@@ -716,21 +1022,21 @@ export default function DashboardPage() {
         <section className="lg:col-span-4 space-y-6">
           
           {/* UPLOAD DE PLANILHA */}
-          <div className="p-5 bg-slate-900/50 backdrop-blur-md border border-slate-800 rounded-2xl space-y-4 shadow-xl">
-            <div className="flex items-center justify-between border-b border-slate-855 pb-2">
-              <h2 className="text-sm font-black text-slate-200 uppercase tracking-wider flex items-center gap-2">
-                <Calendar size={16} className="text-blue-400" />
+          <div className="p-5 bg-white dark:bg-slate-900/50 backdrop-blur-md border border-slate-200/80 dark:border-slate-800 rounded-2xl space-y-4 shadow-xl">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2">
+              <h2 className="text-sm font-black text-slate-800 dark:text-slate-200 uppercase tracking-wider flex items-center gap-2">
+                <Calendar size={16} className="text-blue-500 dark:text-blue-400" />
                 Adicionar Dados
               </h2>
-              <div className="flex bg-slate-950 p-0.5 rounded-lg border border-slate-850">
+              <div className="flex bg-slate-100 dark:bg-slate-950 p-0.5 rounded-lg border border-slate-200 dark:border-slate-800">
                 <button
                   type="button"
                   onClick={() => setUploadMode('file')}
                   disabled={isUploading || isSavingManual}
-                  className={`px-2 py-1 text-[10px] font-bold rounded transition ${
+                  className={`px-2.5 py-1 text-[10px] font-bold rounded transition ${
                     uploadMode === 'file'
-                      ? 'bg-blue-600/20 text-blue-405 border border-blue-500/20'
-                      : 'text-slate-500 hover:text-slate-300'
+                      ? 'bg-blue-600 text-white dark:bg-blue-600/20 dark:text-blue-400 dark:border dark:border-blue-500/20 shadow-sm'
+                      : 'text-slate-500 hover:text-slate-800 dark:text-slate-500 dark:hover:text-slate-300'
                   }`}
                 >
                   Planilha
@@ -739,10 +1045,10 @@ export default function DashboardPage() {
                   type="button"
                   onClick={() => setUploadMode('manual')}
                   disabled={isUploading || isSavingManual}
-                  className={`px-2 py-1 text-[10px] font-bold rounded transition ${
+                  className={`px-2.5 py-1 text-[10px] font-bold rounded transition ${
                     uploadMode === 'manual'
-                      ? 'bg-emerald-600/20 text-emerald-400 border border-emerald-500/20'
-                      : 'text-slate-500 hover:text-slate-300'
+                      ? 'bg-emerald-600 text-white dark:bg-emerald-600/20 dark:text-emerald-400 dark:border dark:border-emerald-500/20 shadow-sm'
+                      : 'text-slate-500 hover:text-slate-800 dark:text-slate-500 dark:hover:text-slate-300'
                   }`}
                 >
                   Manual
@@ -751,22 +1057,24 @@ export default function DashboardPage() {
             </div>
 
             {/* Seletor de Representante */}
-            <div className="space-y-1.5">
-              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                Vincular ao Representante
-              </label>
-              <select
-                value={uploadRepId || ''}
-                onChange={(e) => setUploadRepId(e.target.value)}
-                disabled={isUploading || isSavingManual}
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500/30 transition disabled:opacity-50"
-              >
-                <option value="">Selecione um representante...</option>
-                {representatives.map(r => (
-                  <option key={r.id} value={r.id}>{r.nome}</option>
-                ))}
-              </select>
-            </div>
+            {uploadMode === 'manual' && (
+              <div className="space-y-1.5 animate-fadeIn">
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                  Vincular ao Representante
+                </label>
+                <select
+                  value={uploadRepId || ''}
+                  onChange={(e) => setUploadRepId(e.target.value)}
+                  disabled={isUploading || isSavingManual}
+                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500/30 transition disabled:opacity-50"
+                >
+                  <option value="">Selecione um representante...</option>
+                  {representatives.map(r => (
+                    <option key={r.id} value={r.id}>{r.nome}</option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             {/* Seletores de Mês e Semana de Referência */}
             <div className="space-y-2">
@@ -783,7 +1091,7 @@ export default function DashboardPage() {
                     disabled={isUploading || isSavingManual}
                     min="2000"
                     max="2100"
-                    className="w-full px-2 py-1.5 bg-slate-950 border border-slate-850 rounded-lg text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500/30 text-center"
+                    className="w-full px-2 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-850 rounded-lg text-xs text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500/30 text-center"
                   />
                 </div>
                 <div className="space-y-1">
@@ -792,7 +1100,7 @@ export default function DashboardPage() {
                     value={selectedMonth}
                     onChange={(e) => setSelectedMonth(Number(e.target.value))}
                     disabled={isUploading || isSavingManual}
-                    className="w-full px-2 py-1.5 bg-slate-950 border border-slate-850 rounded-lg text-xs text-slate-200 focus:outline-none"
+                    className="w-full px-2 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-855 rounded-lg text-xs text-slate-800 dark:text-slate-200 focus:outline-none"
                   >
                     {[
                       { value: 0, label: 'Janeiro' },
@@ -818,7 +1126,7 @@ export default function DashboardPage() {
                      value={selectedWeekOfMonth}
                      onChange={(e) => setSelectedWeekOfMonth(Number(e.target.value))}
                      disabled={isUploading || isSavingManual}
-                     className="w-full px-2 py-1.5 bg-slate-950 border border-slate-850 rounded-lg text-xs text-slate-200 focus:outline-none"
+                     className="w-full px-2 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-855 rounded-lg text-xs text-slate-800 dark:text-slate-200 focus:outline-none"
                   >
                     {[1, 2, 3, 4, 5].map(w => (
                       <option key={w} value={w}>Semana {w}</option>
@@ -830,46 +1138,62 @@ export default function DashboardPage() {
 
             {uploadMode === 'file' ? (
               /* Dropzone para planilha */
-              <div
-                onDragEnter={handleDrag}
-                onDragOver={handleDrag}
-                onDragLeave={handleDrag}
-                onDrop={handleDrop}
-                onClick={() => document.getElementById('file-input')?.click()}
-                className={`p-6 border border-dashed rounded-xl flex flex-col items-center justify-center text-center cursor-pointer transition-all ${
-                  dragActive 
-                    ? 'border-blue-500 bg-blue-950/15' 
-                    : 'border-slate-850 hover:border-slate-700 bg-slate-950/40 hover:bg-slate-950/60'
-                }`}
-              >
+              <>
                 <input
                   id="file-input"
                   type="file"
+                  multiple
                   accept=".xlsx,.csv"
                   className="hidden"
+                  onClick={(e) => {
+                    (e.target as HTMLInputElement).value = '';
+                  }}
                   onChange={(e) => {
-                    if (e.target.files && e.target.files[0]) {
-                      handleFileUpload(e.target.files[0]);
+                    if (e.target.files && e.target.files.length > 0) {
+                      handleFileUpload(e.target.files);
                     }
                   }}
                   disabled={isUploading}
                 />
-
-                {isUploading ? (
-                  <div className="space-y-2 py-2">
-                    <RefreshCw className="animate-spin text-emerald-400 mx-auto" size={24} />
-                    <p className="text-xs font-bold text-slate-300">Auditando Planilha...</p>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    <Upload className="text-slate-500 mx-auto" size={24} />
-                    <div>
-                      <p className="text-xs font-bold text-slate-300">Arraste ou clique para carregar</p>
-                      <p className="text-[10px] text-slate-500">Planilha Excel (.xlsx) ou CSV</p>
+                <div
+                  onDragEnter={handleDrag}
+                  onDragOver={handleDrag}
+                  onDragLeave={handleDrag}
+                  onDrop={handleDrop}
+                  onClick={() => document.getElementById('file-input')?.click()}
+                  className={`p-6 border border-dashed rounded-xl flex flex-col items-center justify-center text-center cursor-pointer transition-all ${
+                    dragActive 
+                      ? 'border-blue-500 bg-blue-500/10 dark:bg-blue-950/15' 
+                      : 'border-slate-200 dark:border-slate-850 hover:border-slate-300 dark:hover:border-slate-700 bg-slate-50/50 dark:bg-slate-950/40 hover:bg-slate-100/50 dark:hover:bg-slate-950/60'
+                  }`}
+                >
+                  {isUploading ? (
+                    <div className="space-y-2 py-2">
+                      <RefreshCw className="animate-spin text-emerald-500 dark:text-emerald-400 mx-auto" size={24} />
+                      {uploadProgress ? (
+                        <div className="space-y-1">
+                          <p className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                            Processando {uploadProgress.current} de {uploadProgress.total}
+                          </p>
+                          <p className="text-[10px] text-slate-500 max-w-[180px] truncate mx-auto">
+                            {uploadProgress.fileName}
+                          </p>
+                        </div>
+                      ) : (
+                        <p className="text-xs font-bold text-slate-700 dark:text-slate-300">Auditando Planilha...</p>
+                      )}
                     </div>
-                  </div>
-                )}
-              </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <Upload className="text-slate-400 dark:text-slate-500 mx-auto" size={24} />
+                      <div>
+                        <p className="text-xs font-bold text-slate-700 dark:text-slate-300">Arraste ou clique para carregar</p>
+                        <p className="text-[10px] text-slate-500 dark:text-slate-500">Planilha Excel (.xlsx) ou CSV</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </>
             ) : (
               /* Formulário manual */
               <form onSubmit={handleSaveManualReport} className="space-y-3 pt-1">
@@ -883,7 +1207,7 @@ export default function DashboardPage() {
                       onChange={(e) => setTreinamentosConcluidos(e.target.value)}
                       placeholder="0"
                       disabled={isSavingManual}
-                      className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-850 rounded-xl text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-emerald-500/50"
+                      className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-850 rounded-xl text-xs text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-emerald-500/50"
                     />
                   </div>
                   <div className="space-y-1">
@@ -895,7 +1219,7 @@ export default function DashboardPage() {
                       onChange={(e) => setTotalTreinamentos(e.target.value)}
                       placeholder="0"
                       disabled={isSavingManual}
-                      className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-850 rounded-xl text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-emerald-500/50"
+                      className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-850 rounded-xl text-xs text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-emerald-500/50"
                     />
                   </div>
                 </div>
@@ -910,7 +1234,7 @@ export default function DashboardPage() {
                       onChange={(e) => setExamesConcluidos(e.target.value)}
                       placeholder="0"
                       disabled={isSavingManual}
-                      className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-850 rounded-xl text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-emerald-500/50"
+                      className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-850 rounded-xl text-xs text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-emerald-500/50"
                     />
                   </div>
                   <div className="space-y-1">
@@ -922,7 +1246,7 @@ export default function DashboardPage() {
                       onChange={(e) => setTotalExames(e.target.value)}
                       placeholder="0"
                       disabled={isSavingManual}
-                      className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-850 rounded-xl text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-emerald-500/50"
+                      className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-850 rounded-xl text-xs text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-emerald-500/50"
                     />
                   </div>
                 </div>
@@ -935,7 +1259,7 @@ export default function DashboardPage() {
                     onChange={(e) => setManualObservations(e.target.value)}
                     placeholder="Opcional: notas sobre o desempenho na semana..."
                     disabled={isSavingManual}
-                    className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-850 rounded-xl text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-emerald-500/50 resize-none"
+                    className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-850 rounded-xl text-xs text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-emerald-500/50 resize-none"
                   />
                 </div>
 
@@ -953,8 +1277,8 @@ export default function DashboardPage() {
             {message && (
               <div className={`p-3 rounded-lg border flex items-start gap-2 text-xs ${
                 message.type === 'success' 
-                  ? 'bg-emerald-950/20 border-emerald-900/40 text-emerald-400' 
-                  : 'bg-red-950/20 border-red-900/40 text-red-400'
+                  ? 'bg-emerald-50 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-900/40 text-emerald-700 dark:text-emerald-400' 
+                  : 'bg-red-50 dark:bg-red-950/20 border-red-200 dark:border-red-900/40 text-red-700 dark:text-red-400'
               }`}>
                 {message.type === 'success' ? (
                   <CheckCircle2 size={14} className="mt-0.5 flex-shrink-0" />
@@ -967,38 +1291,16 @@ export default function DashboardPage() {
           </div>
 
           {/* LISTA DE REPRESENTANTES */}
-          <div className="p-5 bg-slate-900/50 backdrop-blur-md border border-slate-800 rounded-2xl space-y-4 shadow-xl">
+          <div className="p-5 bg-white dark:bg-slate-900/50 backdrop-blur-md border border-slate-200/80 dark:border-slate-800 rounded-2xl space-y-4 shadow-xl">
             <div className="flex items-center justify-between">
-              <h2 className="text-sm font-black text-slate-200 uppercase tracking-wider flex items-center gap-2">
-                <Users size={16} className="text-emerald-400" />
+              <h2 className="text-sm font-black text-slate-850 dark:text-slate-200 uppercase tracking-wider flex items-center gap-2">
+                <Users size={16} className="text-emerald-500 dark:text-emerald-400" />
                 Representantes
               </h2>
-              <span className="text-[10px] font-bold bg-slate-950 border border-slate-800 text-slate-400 px-2 py-0.5 rounded-full">
+              <span className="text-[10px] font-bold bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 px-2 py-0.5 rounded-full">
                 {representatives.length}
               </span>
             </div>
-
-            {/* Form de Criação de Representante */}
-            <form onSubmit={handleCreateRep} className="flex gap-2">
-              <input
-                type="text"
-                value={newRepName}
-                onChange={(e) => setNewRepName(e.target.value)}
-                placeholder="Nome do perfil..."
-                required
-                disabled={isCreatingRep}
-                className="flex-1 px-3 py-1.5 bg-slate-950 border border-slate-850 rounded-xl text-xs text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500/50 placeholder-slate-700 disabled:opacity-50"
-              />
-              <button
-                type="submit"
-                disabled={isCreatingRep || !newRepName.trim()}
-                className="px-3 py-1.5 bg-gradient-to-r from-blue-600 to-emerald-600 hover:from-blue-500 hover:to-emerald-500 text-white rounded-xl text-xs font-bold transition flex items-center gap-1 disabled:opacity-50"
-              >
-                {isCreatingRep ? <Loader2 size={12} className="animate-spin" /> : <PlusCircle size={12} />}
-                Criar
-              </button>
-            </form>
-
             <div className="space-y-2 max-h-[380px] overflow-y-auto pr-1 custom-scrollbar">
               {representatives.length > 0 ? (
                 representatives.map((rep) => {
@@ -1009,12 +1311,12 @@ export default function DashboardPage() {
                       onClick={() => setSelectedRepId(rep.id)}
                       className={`p-3 border rounded-xl flex items-center justify-between cursor-pointer transition ${
                         isSelected 
-                          ? 'border-blue-500/50 bg-gradient-to-r from-blue-950/20 to-emerald-950/20 text-slate-100 shadow-md ring-1 ring-emerald-500/30' 
-                          : 'border-slate-850 hover:border-slate-800 bg-slate-950/40 hover:bg-slate-950/60 text-slate-400'
+                          ? 'border-blue-500 bg-blue-50/50 dark:bg-gradient-to-r dark:from-blue-950/20 dark:to-emerald-950/20 text-blue-700 dark:text-slate-100 shadow-sm ring-1 ring-blue-500/20 dark:ring-emerald-500/30' 
+                          : 'border-slate-200 dark:border-slate-855 hover:border-slate-300 dark:hover:border-slate-800 bg-slate-50/50 dark:bg-slate-950/40 hover:bg-slate-100/70 dark:hover:bg-slate-950/60 text-slate-600 dark:text-slate-400'
                       }`}
                     >
                       <div className="flex items-center gap-2.5 min-w-0">
-                        <div className={`p-1.5 rounded-lg ${isSelected ? 'bg-blue-950/30 text-blue-400' : 'bg-slate-900 text-slate-500'}`}>
+                        <div className={`p-1.5 rounded-lg ${isSelected ? 'bg-blue-100 dark:bg-blue-950/30 text-blue-600 dark:text-blue-400' : 'bg-slate-100 dark:bg-slate-900 text-slate-500'}`}>
                           <User size={14} />
                         </div>
                         <div className="flex flex-col min-w-0">
@@ -1039,8 +1341,8 @@ export default function DashboardPage() {
                   );
                 })
               ) : (
-                <div className="text-center py-6 text-xs text-slate-650">
-                  Nenhum representante cadastrado. Digite o nome de um perfil acima para criá-lo.
+                <div className="text-center py-6 text-xs text-slate-500">
+                  Nenhum representante cadastrado. Envie uma planilha de treinamentos para cadastrar automaticamente.
                 </div>
               )}
             </div>
@@ -1053,41 +1355,41 @@ export default function DashboardPage() {
             <div className="space-y-6">
               
               {/* CARD RESUMO DE PERFIL */}
-              <div className="p-6 bg-slate-900/50 backdrop-blur-md border border-slate-800 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-6 shadow-xl relative overflow-hidden">
+              <div className="p-6 bg-white dark:bg-slate-900/50 backdrop-blur-md border border-slate-200/80 dark:border-slate-800 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-6 shadow-xl relative overflow-hidden">
                 <div className="absolute top-0 right-0 w-48 h-48 bg-blue-950/10 rounded-full blur-3xl" />
                 <div className="space-y-1.5">
                   <div className="flex items-center gap-2.5">
-                    <h2 className="text-xl font-black text-slate-100">{activeRep.nome}</h2>
-                    <span className="px-2 py-0.5 border border-blue-900/30 bg-blue-950/30 text-blue-400 text-[10px] font-bold rounded-full">
+                    <h2 className="text-xl font-black text-slate-800 dark:text-slate-100">{activeRep.nome}</h2>
+                    <span className="px-2 py-0.5 border border-blue-200 dark:border-blue-900/30 bg-blue-50 dark:bg-blue-950/30 text-blue-600 dark:text-blue-400 text-[10px] font-bold rounded-full">
                       Perfil Ativo
                     </span>
                   </div>
-                  <p className="text-xs text-slate-400 leading-relaxed max-w-md">
+                  <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed max-w-md">
                     Analise a evolução, compare resultados entre semanas e adicione observações qualitativas ao dossiê.
                   </p>
                 </div>
 
-                <div className="flex items-center gap-8 bg-slate-950/60 border border-slate-850 p-4 rounded-xl">
+                <div className="flex items-center gap-8 bg-slate-50 dark:bg-slate-950/60 border border-slate-200/80 dark:border-slate-850 p-4 rounded-xl">
                   <div className="text-center">
-                    <div className="text-2xl font-black text-emerald-400">{averageAproveitamento}%</div>
+                    <div className="text-2xl font-black text-emerald-500 dark:text-emerald-400">{averageAproveitamento}%</div>
                     <div className="text-[9px] uppercase font-bold text-slate-550 tracking-wider">Aproveitamento Médio</div>
                   </div>
                   <div className="h-8 w-px bg-slate-850" />
                   <div className="text-center">
-                    <div className="text-2xl font-black text-blue-400">{activeRep.meta_aproveitamento}%</div>
+                    <div className="text-2xl font-black text-blue-500 dark:text-blue-400">{activeRep.meta_aproveitamento}%</div>
                     <div className="text-[9px] uppercase font-bold text-slate-550 tracking-wider">Meta Definida</div>
                   </div>
                 </div>
               </div>
 
               {/* NAVEGAÇÃO POR ABAS DO PERFIL */}
-              <div className="border-b border-slate-850 flex items-center gap-1">
+              <div className="border-b border-slate-200 dark:border-slate-850 flex items-center gap-1">
                 <button
                   onClick={() => setActiveTab('evolution')}
                   className={`px-4 py-2 text-xs font-bold flex items-center gap-2 border-b-2 transition -mb-px ${
                     activeTab === 'evolution'
-                      ? 'border-blue-500 text-blue-405'
-                      : 'border-transparent text-slate-450 hover:text-slate-200'
+                      ? 'border-blue-500 text-blue-600 dark:text-blue-400'
+                      : 'border-transparent text-slate-500 dark:text-slate-450 hover:text-slate-800 dark:hover:text-slate-200'
                   }`}
                 >
                   <TrendingUp size={14} />
@@ -1097,8 +1399,8 @@ export default function DashboardPage() {
                   onClick={() => setActiveTab('comparison')}
                   className={`px-4 py-2 text-xs font-bold flex items-center gap-2 border-b-2 transition -mb-px ${
                     activeTab === 'comparison'
-                      ? 'border-blue-500 text-blue-405'
-                      : 'border-transparent text-slate-450 hover:text-slate-200'
+                      ? 'border-blue-500 text-blue-600 dark:text-blue-400'
+                      : 'border-transparent text-slate-500 dark:text-slate-450 hover:text-slate-800 dark:hover:text-slate-200'
                   }`}
                 >
                   <BarChart3 size={14} />
@@ -1108,23 +1410,34 @@ export default function DashboardPage() {
                   onClick={() => setActiveTab('dossier')}
                   className={`px-4 py-2 text-xs font-bold flex items-center gap-2 border-b-2 transition -mb-px ${
                     activeTab === 'dossier'
-                      ? 'border-blue-500 text-blue-405'
-                      : 'border-transparent text-slate-450 hover:text-slate-200'
+                      ? 'border-blue-500 text-blue-600 dark:text-blue-400'
+                      : 'border-transparent text-slate-500 dark:text-slate-450 hover:text-slate-800 dark:hover:text-slate-200'
                   }`}
                 >
                   <ClipboardList size={14} />
                   Dossiê & Notas
+                </button>
+                <button
+                  onClick={() => setActiveTab('export')}
+                  className={`px-4 py-2 text-xs font-bold flex items-center gap-2 border-b-2 transition -mb-px ${
+                    activeTab === 'export'
+                      ? 'border-blue-500 text-blue-600 dark:text-blue-400'
+                      : 'border-transparent text-slate-500 dark:text-slate-450 hover:text-slate-800 dark:hover:text-slate-200'
+                  }`}
+                >
+                  <Download size={14} className="text-emerald-500 dark:text-emerald-400" />
+                  Exportação Geral
                 </button>
                 {userRole === 'admin' && (
                   <button
                     onClick={() => setActiveTab('admin')}
                     className={`px-4 py-2 text-xs font-bold flex items-center gap-2 border-b-2 transition -mb-px ${
                       activeTab === 'admin'
-                        ? 'border-blue-500 text-blue-405'
-                        : 'border-transparent text-slate-450 hover:text-slate-200'
+                        ? 'border-blue-500 text-blue-600 dark:text-blue-400'
+                        : 'border-transparent text-slate-500 dark:text-slate-450 hover:text-slate-800 dark:hover:text-slate-200'
                     }`}
                   >
-                    <Shield size={14} className="text-blue-400" />
+                    <Shield size={14} className="text-blue-500 dark:text-blue-400" />
                     Painel Admin (Supervisores)
                   </button>
                 )}
@@ -1135,32 +1448,32 @@ export default function DashboardPage() {
                 <div className="space-y-6">
                   
                   {/* GRÁFICO */}
-                  <div className="p-5 bg-slate-900/50 border border-slate-800 rounded-2xl space-y-4 shadow-xl">
-                    <h3 className="text-xs font-bold text-slate-450 uppercase tracking-wider flex items-center gap-1.5">
-                      <TrendingUp size={14} className="text-blue-400" />
+                  <div className="p-5 bg-white dark:bg-slate-900/50 border border-slate-200/80 dark:border-slate-800 rounded-2xl space-y-4 shadow-xl">
+                    <h3 className="text-xs font-bold text-slate-650 dark:text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                      <TrendingUp size={14} className="text-blue-550 dark:text-blue-400" />
                       Histórico Semanal de Aproveitamento
                     </h3>
                     <div className="h-60 w-full">
                       {chartData.length > 0 ? (
                         <ResponsiveContainer width="100%" height="100%">
-                          <LineChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                            <XAxis dataKey="semana" stroke="#64748b" fontSize={9} />
-                            <YAxis stroke="#64748b" fontSize={9} domain={[0, 100]} unit="%" />
-                            <Tooltip 
-                              contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px' }}
-                              labelStyle={{ color: '#94a3b8', fontWeight: 'bold' }}
-                            />
-                            <Line 
-                              type="monotone" 
-                              dataKey="Aproveitamento" 
-                              name="Aproveitamento"
-                              stroke="#3b82f6" 
-                              strokeWidth={3}
-                              activeDot={{ r: 6 }} 
-                            />
-                            <ReferenceLine y={activeRep.meta_aproveitamento} label={{ value: `Meta (${activeRep.meta_aproveitamento}%)`, fill: '#10b981', fontSize: 10, position: 'top' }} stroke="#10b981" strokeDasharray="3 3" />
-                          </LineChart>
+                           <LineChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                             <CartesianGrid strokeDasharray="3 3" stroke={theme === 'dark' ? '#1e293b' : '#e2e8f0'} />
+                             <XAxis dataKey="semana" stroke="#64748b" fontSize={9} />
+                             <YAxis stroke="#64748b" fontSize={9} domain={[0, 100]} unit="%" />
+                             <Tooltip 
+                               contentStyle={{ backgroundColor: theme === 'dark' ? '#0f172a' : '#ffffff', borderColor: theme === 'dark' ? '#334155' : '#e2e8f0', borderRadius: '8px' }}
+                               labelStyle={{ color: theme === 'dark' ? '#94a3b8' : '#475569', fontWeight: 'bold' }}
+                             />
+                             <Line 
+                               type="monotone" 
+                               dataKey="Aproveitamento" 
+                               name="Aproveitamento"
+                               stroke="#3b82f6" 
+                               strokeWidth={3}
+                               activeDot={{ r: 6 }} 
+                             />
+                             <ReferenceLine y={activeRep.meta_aproveitamento} label={{ value: `Meta (${activeRep.meta_aproveitamento}%)`, fill: '#10b981', fontSize: 10, position: 'top' }} stroke="#10b981" strokeDasharray="3 3" />
+                           </LineChart>
                         </ResponsiveContainer>
                       ) : (
                         <div className="h-full flex items-center justify-center text-slate-500 text-xs text-center px-4 leading-relaxed">
@@ -1174,22 +1487,22 @@ export default function DashboardPage() {
                   <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
                     
                     {/* TABELA DE REGISTROS (7 COLS) */}
-                    <div className="md:col-span-7 p-5 bg-slate-900/50 border border-slate-800 rounded-2xl space-y-4 shadow-xl">
-                      <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                        <FileSpreadsheet size={14} className="text-blue-400" />
+                    <div className="md:col-span-7 p-5 bg-white dark:bg-slate-900/50 border border-slate-200/80 dark:border-slate-800 rounded-2xl space-y-4 shadow-xl">
+                      <h3 className="text-xs font-bold text-slate-650 dark:text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                        <FileSpreadsheet size={14} className="text-blue-550 dark:text-blue-400" />
                         Histórico de Semanas
                       </h3>
 
                       <div className="overflow-x-auto">
                         <table className="w-full text-left border-collapse">
                           <thead>
-                            <tr className="border-b border-slate-800 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-950/20">
+                            <tr className="border-b border-slate-200 dark:border-slate-800 text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider bg-slate-100/50 dark:bg-slate-950/20">
                               <th className="py-2.5 px-3">Semana</th>
                               <th className="py-2.5 px-3 text-center">Progresso</th>
                               <th className="py-2.5 px-3 text-center">Ações</th>
                             </tr>
                           </thead>
-                          <tbody className="divide-y divide-slate-900 text-xs">
+                          <tbody className="divide-y divide-slate-200 dark:divide-slate-900 text-xs">
                             {weeklyReports.length > 0 ? (
                               weeklyReports.map((report) => {
                                 const isSelected = selectedWeeklyReport?.id === report.id;
@@ -1198,17 +1511,17 @@ export default function DashboardPage() {
                                     key={report.id} 
                                     onClick={() => setSelectedWeeklyReport(report)}
                                     className={`cursor-pointer transition ${
-                                      isSelected ? 'bg-slate-850/60' : 'hover:bg-slate-900/30'
+                                      isSelected ? 'bg-blue-50 dark:bg-slate-800/60' : 'hover:bg-slate-100/60 dark:hover:bg-slate-900/30'
                                     }`}
                                   >
-                                    <td className="py-3 px-3 font-semibold text-slate-200">
+                                    <td className="py-3 px-3 font-semibold text-slate-700 dark:text-slate-200">
                                       {formatISOWeekDisplay(report.semana_ano)}
                                     </td>
                                     <td className="py-3 px-3 text-center">
                                       <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
                                         report.aproveitamento_geral >= activeRep.meta_aproveitamento
-                                          ? 'bg-emerald-950/40 text-emerald-400 border border-emerald-900/30'
-                                          : 'bg-blue-950/40 text-blue-400 border border-blue-900/30'
+                                          ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-900/30'
+                                          : 'bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-900/30'
                                       }`}>
                                         {report.aproveitamento_geral.toFixed(1)}%
                                       </span>
@@ -1217,14 +1530,14 @@ export default function DashboardPage() {
                                       <div className="flex items-center justify-center gap-1.5" onClick={e => e.stopPropagation()}>
                                         <button
                                           onClick={() => setSelectedWeeklyReport(report)}
-                                          className="p-1 hover:text-white text-slate-500 transition rounded"
+                                          className="p-1 hover:text-slate-850 dark:hover:text-white text-slate-500 transition rounded"
                                           title="Visualizar Detalhes"
                                         >
                                           <Eye size={12} />
                                         </button>
                                         <button
                                           onClick={() => handleDeleteWeeklyReport(report.id)}
-                                          className="p-1 hover:text-red-400 text-slate-500 transition rounded"
+                                          className="p-1 hover:text-red-500 dark:hover:text-red-400 text-slate-500 transition rounded"
                                           title="Deletar Semana"
                                         >
                                           <Trash2 size={12} />
@@ -1236,7 +1549,7 @@ export default function DashboardPage() {
                               })
                             ) : (
                               <tr>
-                                <td colSpan={3} className="py-8 text-center text-slate-550 text-[11px]">
+                                <td colSpan={3} className="py-8 text-center text-slate-500 dark:text-slate-400 text-[11px]">
                                   Este representante ainda não possui relatórios semanais cadastrados.
                                 </td>
                               </tr>
@@ -1247,25 +1560,25 @@ export default function DashboardPage() {
                     </div>
 
                     {/* DETALHES DA SEMANA SELECIONADA (5 COLS) */}
-                    <div className="md:col-span-5 p-5 bg-slate-900/50 border border-slate-800 rounded-2xl space-y-4 shadow-xl">
+                    <div className="md:col-span-5 p-5 bg-white dark:bg-slate-900/50 border border-slate-200/80 dark:border-slate-800 rounded-2xl space-y-4 shadow-xl">
                       {selectedWeeklyReport ? (
                         <div className="space-y-4">
                           <div>
-                            <h3 className="text-xs font-bold text-slate-200 uppercase tracking-wider">
+                            <h3 className="text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider">
                               Detalhes da {formatISOWeekDisplay(selectedWeeklyReport.semana_ano)}
                             </h3>
-                            <p className="text-[10px] text-slate-400 mt-0.5">Visão geral do progresso individual</p>
+                            <p className="text-[10px] text-slate-600 dark:text-slate-400 mt-0.5">Visão geral do progresso individual</p>
                           </div>
 
                           <div className="grid grid-cols-2 gap-3 text-center">
-                            <div className="bg-slate-950/60 border border-slate-850 p-2 rounded-lg">
-                              <div className="text-xs text-blue-400 font-bold">
+                            <div className="bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-850 p-2 rounded-lg">
+                              <div className="text-xs text-blue-600 dark:text-blue-400 font-bold">
                                 {selectedWeeklyReport.treinamentos_concluidos} / {selectedWeeklyReport.total_treinamentos}
                               </div>
                               <div className="text-[8px] uppercase text-slate-500 font-bold mt-0.5">Treinamentos</div>
                             </div>
-                            <div className="bg-slate-950/60 border border-slate-850 p-2 rounded-lg">
-                              <div className="text-xs text-teal-400 font-bold">
+                            <div className="bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-855 p-2 rounded-lg">
+                              <div className="text-xs text-teal-650 dark:text-teal-400 font-bold">
                                 {selectedWeeklyReport.exames_concluidos} / {selectedWeeklyReport.total_exames}
                               </div>
                               <div className="text-[8px] uppercase text-slate-500 font-bold mt-0.5">Exames</div>
@@ -1273,17 +1586,17 @@ export default function DashboardPage() {
                           </div>
 
                           <div className="space-y-2">
-                            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Módulos</div>
+                            <div className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Módulos</div>
                             <div className="max-h-44 overflow-y-auto space-y-1.5 pr-1 custom-scrollbar text-[11px]">
                               {selectedWeeklyReport.detalhes.map((c, idx) => (
-                                <div key={idx} className="p-2 bg-slate-950/80 border border-slate-900 rounded-lg flex items-center justify-between">
-                                  <span className="font-semibold text-slate-300 truncate max-w-[130px]" title={c.conteudo}>
+                                <div key={idx} className="p-2 bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-900 rounded-lg flex items-center justify-between">
+                                  <span className="font-semibold text-slate-700 dark:text-slate-300 truncate max-w-[130px]" title={c.conteudo}>
                                     {c.conteudo}
                                   </span>
                                   <span className={`px-1.5 py-0.5 rounded text-[8px] font-black ${
                                     c.status === 'Concluído' 
-                                      ? 'bg-emerald-950/40 text-emerald-400' 
-                                      : 'bg-orange-950/40 text-orange-400'
+                                      ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400' 
+                                      : 'bg-orange-50 dark:bg-orange-950/40 text-orange-700 dark:text-orange-400'
                                   }`}>
                                     {c.status}
                                   </span>
@@ -1294,8 +1607,8 @@ export default function DashboardPage() {
                         </div>
                       ) : (
                         <div className="h-full flex flex-col items-center justify-center text-center py-10 text-slate-500 text-xs space-y-2">
-                          <Calendar size={24} className="text-slate-700 animate-pulse" />
-                          <p className="font-bold text-slate-400">Sem Relatórios</p>
+                          <Calendar size={24} className="text-slate-300 dark:text-slate-700 animate-pulse" />
+                          <p className="font-bold text-slate-600 dark:text-slate-400">Sem Relatórios</p>
                           <p className="text-[10px] text-slate-500 max-w-[200px] leading-relaxed">
                             Selecione este representante no painel de upload à esquerda e envie uma planilha.
                           </p>
@@ -1309,39 +1622,48 @@ export default function DashboardPage() {
 
               {/* TAB 2: COMPARADOR DE SEMANAS */}
               {activeTab === 'comparison' && (
-                <div className="p-5 bg-slate-900/50 border border-slate-800 rounded-2xl space-y-6 shadow-xl">
+                <div className="p-5 bg-white dark:bg-slate-900/50 border border-slate-200/80 dark:border-slate-800 rounded-2xl space-y-6 shadow-xl">
                   
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-4">
                     <div>
-                      <h3 className="text-xs font-bold text-slate-200 uppercase tracking-wider flex items-center gap-1.5">
-                        <BarChart3 size={14} className="text-blue-400" />
+                      <h3 className="text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider flex items-center gap-1.5">
+                        <BarChart3 size={14} className="text-blue-555 dark:text-blue-400" />
                         Comparador Week-over-Week
                       </h3>
-                      <p className="text-[10px] text-slate-400 mt-0.5">Selecione duas semanas para comparar o avanço dos cursos</p>
+                      <p className="text-[10px] text-slate-600 dark:text-slate-400 mt-0.5">Selecione duas semanas para comparar o avanço dos cursos</p>
                     </div>
 
-                    <div className="flex items-center gap-2 text-xs">
+                    <div className="flex flex-wrap items-center gap-2 text-xs">
                       <select
                         value={compareWeekA}
                         onChange={(e) => setCompareWeekA(e.target.value)}
-                        className="px-2 py-1.5 bg-slate-950 border border-slate-800 text-slate-300 rounded-lg focus:outline-none"
+                        className="px-2 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500/50 transition-colors"
                       >
                         <option value="">Semana Base...</option>
                         {weeklyReports.map(r => (
                           <option key={r.id} value={r.semana_ano}>{formatISOWeekDisplay(r.semana_ano)}</option>
                         ))}
                       </select>
-                      <ArrowRight size={14} className="text-slate-500" />
+                      <ArrowRight size={14} className="text-slate-400 dark:text-slate-500" />
                       <select
                         value={compareWeekB}
                         onChange={(e) => setCompareWeekB(e.target.value)}
-                        className="px-2 py-1.5 bg-slate-950 border border-slate-800 text-slate-300 rounded-lg focus:outline-none"
+                        className="px-2 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500/50 transition-colors"
                       >
                         <option value="">Semana Foco...</option>
                         {weeklyReports.map(r => (
                           <option key={r.id} value={r.semana_ano}>{formatISOWeekDisplay(r.semana_ano)}</option>
                         ))}
                       </select>
+                      <button
+                        onClick={handleDownloadComparison}
+                        disabled={comparisonData.length === 0}
+                        className="px-3 py-1.5 bg-gradient-to-r from-blue-600 to-emerald-600 hover:from-blue-500 hover:to-emerald-500 disabled:from-slate-100 disabled:to-slate-100 dark:disabled:from-slate-900/40 dark:disabled:to-slate-900/40 disabled:border-slate-200 dark:disabled:border-slate-800/80 disabled:text-slate-400 dark:disabled:text-slate-600 text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5 shadow-sm dark:shadow-md cursor-pointer disabled:cursor-not-allowed border-none whitespace-nowrap flex-shrink-0"
+                        title="Baixar Comparativo em Excel para a Diretoria"
+                      >
+                        <Download size={13} />
+                        Exportar para Diretoria
+                      </button>
                     </div>
                   </div>
 
@@ -1350,27 +1672,27 @@ export default function DashboardPage() {
                     <div className="overflow-x-auto">
                       <table className="w-full text-left border-collapse text-xs">
                         <thead>
-                          <tr className="border-b border-slate-800 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-950/20">
+                          <tr className="border-b border-slate-200 dark:border-slate-800 text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider bg-slate-100/50 dark:bg-slate-950/20">
                             <th className="py-2.5 px-3">Nome do Treinamento / Exame</th>
                             <th className="py-2.5 px-3 text-center">Semana Base</th>
                             <th className="py-2.5 px-3 text-center">Semana Foco</th>
                             <th className="py-2.5 px-3 text-center">Status de Avanço</th>
                           </tr>
                         </thead>
-                        <tbody className="divide-y divide-slate-900">
+                        <tbody className="divide-y divide-slate-200 dark:divide-slate-900">
                           {comparisonData.map((row, idx) => (
-                            <tr key={idx} className="hover:bg-slate-900/35 transition">
-                              <td className="py-3 px-3 font-semibold text-slate-200">{row.nome}</td>
+                            <tr key={idx} className="hover:bg-slate-50 dark:hover:bg-slate-900/35 transition">
+                              <td className="py-3 px-3 font-semibold text-slate-700 dark:text-slate-200">{row.nome}</td>
                               <td className="py-3 px-3 text-center">
                                 <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
-                                  row.statusA === 'Concluído' ? 'text-emerald-400 bg-emerald-950/10' : 'text-orange-400 bg-orange-950/10'
+                                  row.statusA === 'Concluído' ? 'text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/10' : 'text-orange-700 dark:text-orange-400 bg-orange-50 dark:bg-orange-950/10'
                                 }`}>
                                   {row.statusA}
                                 </span>
                               </td>
                               <td className="py-3 px-3 text-center">
                                 <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
-                                  row.statusB === 'Concluído' ? 'text-emerald-400 bg-emerald-950/10' : 'text-orange-400 bg-orange-950/10'
+                                  row.statusB === 'Concluído' ? 'text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/10' : 'text-orange-700 dark:text-orange-400 bg-orange-50 dark:bg-orange-950/10'
                                 }`}>
                                   {row.statusB}
                                 </span>
@@ -1387,9 +1709,9 @@ export default function DashboardPage() {
                     </div>
                   ) : (
                     <div className="py-12 flex flex-col items-center justify-center text-center text-slate-500 text-xs space-y-2">
-                      <BarChart3 size={32} className="text-slate-700" />
-                      <p className="font-bold text-slate-400">Comparação Indisponível</p>
-                      <p className="text-[10px] text-slate-600 max-w-[250px] leading-relaxed">
+                      <BarChart3 size={32} className="text-slate-400 dark:text-slate-700" />
+                      <p className="font-bold text-slate-600 dark:text-slate-400">Comparação Indisponível</p>
+                      <p className="text-[10px] text-slate-500 max-w-[250px] leading-relaxed">
                         {weeklyReports.length === 0 
                           ? 'É necessário que o representante possua pelo menos dois relatórios semanais carregados para habilitar a comparação.' 
                           : 'Por favor, selecione duas semanas diferentes no menu acima para auditar o progresso comparativo.'}
@@ -1402,22 +1724,22 @@ export default function DashboardPage() {
 
               {/* TAB 3: DOSSIÊ & NOTAS */}
               {activeTab === 'dossier' && (
-                <div className="p-5 bg-slate-900/50 border border-slate-800 rounded-2xl space-y-6 shadow-xl">
+                <div className="p-5 bg-white dark:bg-slate-900/50 border border-slate-200/80 dark:border-slate-800 rounded-2xl space-y-6 shadow-xl">
                   
                   <div>
-                    <h3 className="text-xs font-bold text-slate-200 uppercase tracking-wider flex items-center gap-1.5">
-                      <ClipboardList size={14} className="text-blue-400" />
+                    <h3 className="text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider flex items-center gap-1.5">
+                      <ClipboardList size={14} className="text-blue-555 dark:text-blue-400" />
                       Dossiê Qualitativo de Desempenho
                     </h3>
-                    <p className="text-[10px] text-slate-400 mt-0.5">Registre comentários qualitativos, feedbacks e defina metas de aproveitamento.</p>
+                    <p className="text-[10px] text-slate-600 dark:text-slate-400 mt-0.5">Registre comentários qualitativos, feedbacks e defina metas de aproveitamento.</p>
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
                     
                     {/* META (4 COLS) */}
                     <div className="md:col-span-4 space-y-1.5">
-                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
-                        <Target size={12} className="text-emerald-400" />
+                      <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                        <Target size={12} className="text-emerald-500 dark:text-emerald-400" />
                         Meta de Aproveitamento
                       </label>
                       <div className="relative">
@@ -1427,16 +1749,16 @@ export default function DashboardPage() {
                           max="100"
                           value={repTarget}
                           onChange={(e) => setRepTarget(Number(e.target.value))}
-                          className="w-full px-3 py-2 bg-slate-950 border border-slate-850 rounded-xl text-xs font-bold focus:outline-none focus:ring-1 focus:ring-emerald-500 text-emerald-400"
+                          className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-855 rounded-xl text-xs font-bold focus:outline-none focus:ring-1 focus:ring-emerald-500 text-emerald-600 dark:text-emerald-400"
                         />
-                        <span className="absolute right-3 top-2.5 text-[10px] font-bold text-slate-500">%</span>
+                        <span className="absolute right-3 top-2.5 text-[10px] font-bold text-slate-400 dark:text-slate-500">%</span>
                       </div>
                     </div>
 
                     {/* OBSERVAÇÕES (8 COLS) */}
                     <div className="md:col-span-8 space-y-1.5">
-                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
-                        <FileText size={12} className="text-blue-400" />
+                      <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                        <FileText size={12} className="text-blue-555 dark:text-blue-400" />
                         Notas e Observações de Supervisão
                       </label>
                       <textarea
@@ -1444,13 +1766,13 @@ export default function DashboardPage() {
                         onChange={(e) => setRepNotes(e.target.value)}
                         placeholder="Ex: Representante iniciou novos módulos técnicos. Necessita de acompanhamento presencial em exames de conformidade..."
                         rows={6}
-                        className="w-full p-3 bg-slate-950 border border-slate-850 rounded-xl text-xs leading-relaxed focus:outline-none focus:ring-1 focus:ring-emerald-500 placeholder-slate-600 resize-none text-slate-300"
+                        className="w-full p-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-855 rounded-xl text-xs leading-relaxed focus:outline-none focus:ring-1 focus:ring-emerald-500 placeholder-slate-400 dark:placeholder-slate-600 resize-none text-slate-800 dark:text-slate-300"
                       />
                     </div>
 
                   </div>
 
-                  <div className="flex justify-end border-t border-slate-850 pt-4">
+                  <div className="flex justify-end border-t border-slate-200 dark:border-slate-850 pt-4">
                     <button
                       onClick={handleSaveProfile}
                       disabled={isSavingProfile}
@@ -1475,19 +1797,19 @@ export default function DashboardPage() {
 
               {/* TAB 4: PAINEL ADMIN */}
               {activeTab === 'admin' && userRole === 'admin' && (
-                <div className="p-5 bg-slate-900/50 border border-slate-800 rounded-2xl space-y-6 shadow-xl animate-in fade-in duration-300">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-4">
+                <div className="p-5 bg-white dark:bg-slate-900/50 border border-slate-200/80 dark:border-slate-800 rounded-2xl space-y-6 shadow-xl animate-in fade-in duration-300">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-4">
                     <div>
-                      <h3 className="text-xs font-bold text-slate-200 uppercase tracking-wider flex items-center gap-1.5">
-                        <Shield size={14} className="text-teal-400" />
+                      <h3 className="text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider flex items-center gap-1.5">
+                        <Shield size={14} className="text-teal-500 dark:text-teal-400" />
                         Gerenciamento de Supervisores
                       </h3>
-                      <p className="text-[10px] text-slate-400 mt-0.5">Exclua ou gerencie o acesso dos supervisores cadastrados no sistema.</p>
+                      <p className="text-[10px] text-slate-600 dark:text-slate-400 mt-0.5">Exclua ou gerencie o acesso dos supervisores cadastrados no sistema.</p>
                     </div>
                     <button
                       onClick={loadSupervisors}
                       disabled={isLoadingSupervisors}
-                      className="px-3 py-1.5 bg-slate-950 border border-slate-850 hover:border-slate-800 text-slate-300 hover:text-slate-100 rounded-lg text-xs font-bold transition flex items-center gap-1.5 disabled:opacity-50"
+                      className="px-3 py-1.5 bg-slate-50 dark:bg-slate-955 border border-slate-200 dark:border-slate-850 hover:border-slate-300 dark:hover:border-slate-800 text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100 rounded-lg text-xs font-bold transition flex items-center gap-1.5 disabled:opacity-50"
                     >
                       <RefreshCw size={12} className={isLoadingSupervisors ? 'animate-spin' : ''} />
                       Atualizar Lista
@@ -1496,30 +1818,30 @@ export default function DashboardPage() {
 
                   {isLoadingSupervisors ? (
                     <div className="py-12 flex flex-col items-center justify-center gap-2 text-xs text-slate-500">
-                      <Loader2 className="animate-spin text-teal-400" size={24} />
+                      <Loader2 className="animate-spin text-teal-500 dark:text-teal-400" size={24} />
                       Carregando supervisores...
                     </div>
                   ) : supervisors.length > 0 ? (
                     <div className="overflow-x-auto">
                       <table className="w-full text-left border-collapse text-xs">
                         <thead>
-                          <tr className="border-b border-slate-800 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-950/20">
+                          <tr className="border-b border-slate-200 dark:border-slate-800 text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider bg-slate-100/50 dark:bg-slate-950/20">
                             <th className="py-2.5 px-3">E-mail do Supervisor</th>
                             <th className="py-2.5 px-3 text-center">Data de Cadastro</th>
                             <th className="py-2.5 px-3 text-center">Ações</th>
                           </tr>
                         </thead>
-                        <tbody className="divide-y divide-slate-900">
+                        <tbody className="divide-y divide-slate-200 dark:divide-slate-900">
                           {supervisors.map((sup) => (
-                            <tr key={sup.id} className="hover:bg-slate-900/35 transition">
-                              <td className="py-3 px-3 font-semibold text-slate-200">{sup.email}</td>
-                              <td className="py-3 px-3 text-center text-slate-400">
+                            <tr key={sup.id} className="hover:bg-slate-50 dark:hover:bg-slate-900/35 transition">
+                              <td className="py-3 px-3 font-semibold text-slate-700 dark:text-slate-200">{sup.email}</td>
+                              <td className="py-3 px-3 text-center text-slate-555 dark:text-slate-400">
                                 {new Date(sup.created_at).toLocaleDateString('pt-BR')}
                               </td>
                               <td className="py-3 px-3 text-center">
                                 <button
                                   onClick={() => handleDeleteSupervisor(sup.id, sup.email)}
-                                  className="px-2.5 py-1 bg-red-950/30 hover:bg-red-900/40 border border-red-900/40 text-red-400 rounded-lg text-[10px] font-bold transition flex items-center gap-1 mx-auto"
+                                  className="px-2.5 py-1 bg-red-50 dark:bg-red-950/30 hover:bg-red-100 dark:hover:bg-red-900/40 border border-red-200 dark:border-red-900/40 text-red-600 dark:text-red-400 rounded-lg text-[10px] font-bold transition flex items-center gap-1 mx-auto"
                                 >
                                   <Trash2 size={10} />
                                   Excluir Conta
@@ -1535,6 +1857,92 @@ export default function DashboardPage() {
                       Nenhum supervisor cadastrado além de você.
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* TAB 5: EXPORTAÇÃO GERAL */}
+              {activeTab === 'export' && (
+                <div className="p-5 bg-white dark:bg-slate-900/50 border border-slate-200/80 dark:border-slate-800 rounded-2xl space-y-6 shadow-xl animate-fadeIn">
+                  
+                  <div className="border-b border-slate-200 dark:border-slate-800 pb-4">
+                    <h3 className="text-xs font-bold text-slate-850 dark:text-slate-200 uppercase tracking-wider flex items-center gap-1.5">
+                      <Download size={14} className="text-emerald-500 dark:text-emerald-400" />
+                      Central de Exportação de Resultados
+                    </h3>
+                    <p className="text-[10px] text-slate-600 dark:text-slate-400 mt-0.5">
+                      Gere e faça o download de relatórios detalhados de todos os representantes comerciais cadastrados.
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    
+                    {/* CARD 1: EXPORTAR CONSOLIDADO */}
+                    <div className="p-5 bg-slate-50 dark:bg-slate-950/40 border border-slate-200 dark:border-slate-850 rounded-xl space-y-4 flex flex-col justify-between">
+                      <div className="space-y-2">
+                        <div className="p-2 w-fit rounded-lg bg-blue-100 dark:bg-blue-950/30 text-blue-600 dark:text-blue-400">
+                          <FileSpreadsheet size={20} />
+                        </div>
+                        <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider">
+                          Relatório Único Consolidado
+                        </h4>
+                        <p className="text-[11px] text-slate-655 dark:text-slate-400 leading-relaxed">
+                          Gera uma única planilha Excel (`.xlsx`) com abas separadas. Contém o **Resumo da Diretoria**, o **Histórico Consolidado** de todas as semanas e o **detalhamento das atividades** de cada representante. Ideal para análises gerais rápidas ou impressão consolidada.
+                        </p>
+                      </div>
+
+                      <button
+                        onClick={handleExportConsolidatedExcel}
+                        disabled={isExporting}
+                        className="w-full py-2.5 bg-gradient-to-r from-blue-600 to-emerald-600 hover:from-blue-500 hover:to-emerald-500 text-white font-bold rounded-lg text-xs shadow-sm flex items-center justify-center gap-2 transition disabled:opacity-50 border-none"
+                      >
+                        {isExporting ? (
+                          <>
+                            <Loader2 size={14} className="animate-spin" />
+                            Processando...
+                          </>
+                        ) : (
+                          <>
+                            <Download size={14} />
+                            Exportar Tudo em um Arquivo
+                          </>
+                        )}
+                      </button>
+                    </div>
+
+                    {/* CARD 2: EXPORTAR SEPARADOS ZIP */}
+                    <div className="p-5 bg-slate-50 dark:bg-slate-950/40 border border-slate-200 dark:border-slate-855 rounded-xl space-y-4 flex flex-col justify-between">
+                      <div className="space-y-2">
+                        <div className="p-2 w-fit rounded-lg bg-emerald-100 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400">
+                          <Users size={20} />
+                        </div>
+                        <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider">
+                          Arquivos Individuais (.zip)
+                        </h4>
+                        <p className="text-[11px] text-slate-655 dark:text-slate-400 leading-relaxed">
+                          Gera planilhas Excel independentes para cada representante (contendo seu histórico e detalhes do último período) e as exporta compactadas em uma pasta compactada `.zip`. Ideal para envio individualizado de dossiês para cada supervisor ou comercial.
+                        </p>
+                      </div>
+
+                      <button
+                        onClick={handleExportIndividualExcelsZip}
+                        disabled={isExporting}
+                        className="w-full py-2.5 bg-gradient-to-r from-emerald-600 to-blue-600 hover:from-emerald-500 hover:to-blue-500 text-white font-bold rounded-lg text-xs shadow-sm flex items-center justify-center gap-2 transition disabled:opacity-50 border-none"
+                      >
+                        {isExporting ? (
+                          <>
+                            <Loader2 size={14} className="animate-spin" />
+                            Processando...
+                          </>
+                        ) : (
+                          <>
+                            <Download size={14} />
+                            Exportar em ZIP Separado
+                          </>
+                        )}
+                      </button>
+                    </div>
+
+                  </div>
                 </div>
               )}
 

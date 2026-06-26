@@ -3,7 +3,7 @@ import { createSupabaseServerClient } from '@/lib/supabase-server';
 import * as XLSX from 'xlsx';
 
 // Constantes de Segurança
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 const ALLOWED_MIME_TYPES = [
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
   'text/csv', // .csv
@@ -117,8 +117,12 @@ export async function POST(request: Request) {
 
       // Regra 2: Identificar se é Exame ou Conteúdo
       const isExam = conteudoRaw.toLowerCase().endsWith('- exame') || conteudoRaw.toLowerCase().includes('- exame ');
-      // Regra 3: Considerar Concluído apenas progresso = 100
-      const status = progresso === 100.0 ? 'Concluído' : 'Em Andamento';
+      // Regra 3: Considerar Concluído:
+      // - Para conteúdos (não marcados como Exame): a partir de 97%
+      // - Para exames: apenas com 100%
+      const status = isExam
+        ? (progresso === 100.0 ? 'Concluído' : 'Em Andamento')
+        : (progresso >= 97.0 ? 'Concluído' : 'Em Andamento');
 
       const registro = {
         conteudo: conteudoRaw,
@@ -146,17 +150,16 @@ export async function POST(request: Request) {
     let repName = '';
 
     if (representanteIdFromClient) {
-      // Obter representante do banco e validar ownership para evitar IDOR
+      // Obter representante do banco
       const { data: rep, error: repError } = await supabase
         .from('representantes')
         .select('id, nome')
         .eq('id', representanteIdFromClient)
-        .eq('usuario_id', usuarioId)
         .maybeSingle();
 
       if (repError || !rep) {
         return NextResponse.json(
-          { error: 'Representante não encontrado ou não pertence a este usuário.' },
+          { error: 'Representante não encontrado.' },
           { status: 400 }
         );
       }
@@ -180,7 +183,7 @@ export async function POST(request: Request) {
         .from('representantes')
         .select('id')
         .eq('nome', repName)
-        .eq('usuario_id', usuarioId)
+        .limit(1)
         .maybeSingle();
 
       if (repSelectError) {
@@ -237,6 +240,7 @@ export async function POST(request: Request) {
       success: true,
       data: {
         representante: repName,
+        representanteId: finalRepresentanteId,
         week: weekStr,
         semana_ano: semanaReferencia,
         total_treinamentos: totalContents,

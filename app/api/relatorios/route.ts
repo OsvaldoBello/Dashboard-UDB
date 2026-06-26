@@ -55,17 +55,16 @@ export async function POST(request: Request) {
     const completedAll = concluidosTreinamentos + concluidosExames;
     const aproveitamentoGeral = totalAll > 0 ? parseFloat(((completedAll / totalAll) * 100).toFixed(2)) : 0.00;
 
-    // 3. Validar se o representante pertence ao usuário
+    // 3. Validar se o representante existe
     const { data: rep, error: repError } = await supabase
       .from('representantes')
       .select('id, nome')
       .eq('id', representanteId)
-      .eq('usuario_id', usuarioId)
       .maybeSingle();
 
     if (repError || !rep) {
       return NextResponse.json(
-        { error: 'Representante não encontrado ou não pertence a este usuário.' },
+        { error: 'Representante não encontrado.' },
         { status: 400 }
       );
     }

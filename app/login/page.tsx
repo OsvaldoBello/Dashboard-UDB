@@ -333,15 +333,15 @@ export default function LoginPage() {
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="Defina uma senha segura"
                   disabled={isLoading}
-                  className="w-full pl-10 pr-4 py-3 bg-slate-950/80 border border-slate-800 rounded-xl text-xs text-slate-100 placeholder-slate-650 focus:outline-none focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500/50 transition disabled:opacity-50"
+                  className="w-full pl-10 pr-4 py-3 bg-slate-950/80 border border-slate-800 rounded-xl text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500/50 transition disabled:opacity-50"
                 />
               </div>
             </div>
 
             {/* Checklist Visual Interativa de Segurança */}
             {password.length > 0 && (
-              <div className="p-3 bg-slate-950/60 border border-slate-850 rounded-xl space-y-1.5 text-[10px]">
-                <p className="font-bold text-slate-450 uppercase tracking-wider">Requisitos da Senha:</p>
+              <div className="p-3 bg-slate-950/60 border border-slate-800 rounded-xl space-y-1.5 text-[10px]">
+                <p className="font-bold text-slate-400 uppercase tracking-wider">Requisitos da Senha:</p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-1.5">
                   <div className="flex items-center gap-1.5">
                     <span className={`w-1.5 h-1.5 rounded-full ${pwdCriteria.length ? 'bg-emerald-500' : 'bg-red-500'}`} />

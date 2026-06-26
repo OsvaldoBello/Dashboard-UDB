@@ -30,8 +30,8 @@ CREATE TABLE public.representantes (
     meta_aproveitamento NUMERIC(5, 2) DEFAULT 80.00, -- Meta de progresso padrão (ex: 80%)
     usuario_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE DEFAULT auth.uid(),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    -- Restrição: Evita nomes duplicados para o mesmo usuário/supervisor
-    CONSTRAINT unique_representante_por_usuario UNIQUE (nome, usuario_id)
+    -- Restrição: Evita nomes duplicados globalmente no site
+    CONSTRAINT unique_representante_nome UNIQUE (nome)
 );
 
 -- Indexação para buscas rápidas por nome e dono
@@ -81,56 +81,38 @@ USING (auth.uid() = id OR EXISTS (SELECT 1 FROM public.perfis WHERE id = auth.ui
 WITH CHECK (auth.uid() = id OR EXISTS (SELECT 1 FROM public.perfis WHERE id = auth.uid() AND role = 'admin'));
 
 -- 5. POLÍTICAS PARA A TABELA REPRESENTANTES
-CREATE POLICY "Permitir leitura dos próprios representantes ou administradores" 
-ON public.representantes 
-FOR SELECT 
-TO authenticated 
-USING (auth.uid() = usuario_id OR EXISTS (SELECT 1 FROM public.perfis WHERE id = auth.uid() AND role = 'admin'));
+CREATE POLICY "Permitir leitura de todos os representantes para autenticados" 
+ON public.representantes FOR SELECT TO authenticated 
+USING (true);
 
-CREATE POLICY "Permitir inserção dos próprios representantes ou administradores" 
-ON public.representantes 
-FOR INSERT 
-TO authenticated 
-WITH CHECK (auth.uid() = usuario_id OR EXISTS (SELECT 1 FROM public.perfis WHERE id = auth.uid() AND role = 'admin'));
+CREATE POLICY "Permitir inserção de representantes para autenticados" 
+ON public.representantes FOR INSERT TO authenticated 
+WITH CHECK (true);
 
-CREATE POLICY "Permitir atualização dos próprios representantes ou administradores" 
-ON public.representantes 
-FOR UPDATE 
-TO authenticated 
-USING (auth.uid() = usuario_id OR EXISTS (SELECT 1 FROM public.perfis WHERE id = auth.uid() AND role = 'admin'))
-WITH CHECK (auth.uid() = usuario_id OR EXISTS (SELECT 1 FROM public.perfis WHERE id = auth.uid() AND role = 'admin'));
+CREATE POLICY "Permitir atualização de todos os representantes para autenticados" 
+ON public.representantes FOR UPDATE TO authenticated 
+USING (true) WITH CHECK (true);
 
-CREATE POLICY "Permitir exclusão dos próprios representantes ou administradores" 
-ON public.representantes 
-FOR DELETE 
-TO authenticated 
-USING (auth.uid() = usuario_id OR EXISTS (SELECT 1 FROM public.perfis WHERE id = auth.uid() AND role = 'admin'));
+CREATE POLICY "Permitir exclusão de todos os representantes para autenticados" 
+ON public.representantes FOR DELETE TO authenticated 
+USING (true);
 
 -- 6. POLÍTICAS PARA A TABELA RELATÓRIOS SEMANAIS
-CREATE POLICY "Permitir leitura dos próprios relatórios ou administradores" 
-ON public.relatorios_semanais 
-FOR SELECT 
-TO authenticated 
-USING (auth.uid() = usuario_id OR EXISTS (SELECT 1 FROM public.perfis WHERE id = auth.uid() AND role = 'admin'));
+CREATE POLICY "Permitir leitura de todos os relatórios para autenticados" 
+ON public.relatorios_semanais FOR SELECT TO authenticated 
+USING (true);
 
-CREATE POLICY "Permitir inserção dos próprios relatórios ou administradores" 
-ON public.relatorios_semanais 
-FOR INSERT 
-TO authenticated 
-WITH CHECK (auth.uid() = usuario_id OR EXISTS (SELECT 1 FROM public.perfis WHERE id = auth.uid() AND role = 'admin'));
+CREATE POLICY "Permitir inserção de relatórios para autenticados" 
+ON public.relatorios_semanais FOR INSERT TO authenticated 
+WITH CHECK (true);
 
-CREATE POLICY "Permitir atualização dos próprios relatórios ou administradores" 
-ON public.relatorios_semanais 
-FOR UPDATE 
-TO authenticated 
-USING (auth.uid() = usuario_id OR EXISTS (SELECT 1 FROM public.perfis WHERE id = auth.uid() AND role = 'admin'))
-WITH CHECK (auth.uid() = usuario_id OR EXISTS (SELECT 1 FROM public.perfis WHERE id = auth.uid() AND role = 'admin'));
+CREATE POLICY "Permitir atualização de todos os relatórios para autenticados" 
+ON public.relatorios_semanais FOR UPDATE TO authenticated 
+USING (true) WITH CHECK (true);
 
-CREATE POLICY "Permitir exclusão dos próprios relatórios ou administradores" 
-ON public.relatorios_semanais 
-FOR DELETE 
-TO authenticated 
-USING (auth.uid() = usuario_id OR EXISTS (SELECT 1 FROM public.perfis WHERE id = auth.uid() AND role = 'admin'));
+CREATE POLICY "Permitir exclusão de todos os relatórios para autenticados" 
+ON public.relatorios_semanais FOR DELETE TO authenticated 
+USING (true);
 
 -- ====================================================================
 -- AUTOMACÃO DE CADASTRO (TRIGGERS & PROCEDURES)

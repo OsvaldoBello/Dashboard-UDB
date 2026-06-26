@@ -33,7 +33,6 @@ export async function PATCH(request: Request) {
       .from('representantes')
       .update(updateData)
       .eq('id', id)
-      .eq('usuario_id', user.id)
       .select()
       .single();
 
