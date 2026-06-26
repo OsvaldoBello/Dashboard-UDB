@@ -1,5 +1,6 @@
 import { createServerClient } from '@supabase/ssr';
-import { cookies } from 'next/headers';
+import { cookies, headers } from 'next/headers';
+import { createClient } from '@supabase/supabase-js';
 
 function cleanEnvValue(value: string | undefined): string | undefined {
   if (!value) return value;
@@ -11,10 +12,46 @@ function cleanEnvValue(value: string | undefined): string | undefined {
 }
 
 export async function createSupabaseServerClient() {
-  const cookieStore = await cookies();
+  const headerStore = await headers();
+  const authHeader = headerStore.get('Authorization') || headerStore.get('authorization');
+  
   let url = cleanEnvValue(process.env.NEXT_PUBLIC_SUPABASE_URL);
   let anonKey = cleanEnvValue(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
+  
+  // Auto-correção caso as chaves estejam invertidas na Vercel
+  if (url && anonKey) {
+    const urlIsJwtOrKey = !url.startsWith('http://') && !url.startsWith('https://');
+    const keyIsUrl = anonKey.startsWith('http://') || anonKey.startsWith('https://');
+    if (urlIsJwtOrKey && keyIsUrl) {
+      const temp = url;
+      url = anonKey;
+      anonKey = temp;
+    }
+  }
 
+  const isValidUrl = url && (url.startsWith('http://') || url.startsWith('https://'));
+
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const token = authHeader.substring(7);
+    if (url && anonKey && isValidUrl) {
+      try {
+        return createClient(url, anonKey, {
+          global: {
+            headers: {
+              Authorization: `Bearer ${token}`
+            }
+          },
+          auth: {
+            persistSession: false
+          }
+        });
+      } catch (err) {
+        console.error("Erro ao instanciar Supabase Client com token Bearer:", err);
+      }
+    }
+  }
+
+  const cookieStore = await cookies();
   console.log("SUPABASE CONFIG DIAGNOSTICS:");
   console.log("- process.env.NEXT_PUBLIC_SUPABASE_URL defined:", !!process.env.NEXT_PUBLIC_SUPABASE_URL);
   if (process.env.NEXT_PUBLIC_SUPABASE_URL) {
@@ -26,23 +63,6 @@ export async function createSupabaseServerClient() {
     console.log("  Raw ANON_KEY length:", process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY.length);
     console.log("  Raw ANON_KEY prefix:", process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY.substring(0, 15));
   }
-
-  // Auto-correção caso as chaves estejam invertidas na Vercel
-  if (url && anonKey) {
-    const urlIsJwtOrKey = !url.startsWith('http://') && !url.startsWith('https://');
-    const keyIsUrl = anonKey.startsWith('http://') || anonKey.startsWith('https://');
-    if (urlIsJwtOrKey && keyIsUrl) {
-      console.log("  Dynamic Correction: Swapping URL and ANON_KEY because they were inverted!");
-      const temp = url;
-      url = anonKey;
-      anonKey = temp;
-    }
-  }
-
-  console.log("  Post-Correction URL prefix:", url ? url.substring(0, 10) : "null");
-  console.log("  Post-Correction Key prefix:", anonKey ? anonKey.substring(0, 15) : "null");
-
-  const isValidUrl = url && (url.startsWith('http://') || url.startsWith('https://'));
 
   // Fallback seguro durante a compilação (build) na Vercel ou CI/CD
   if (!url || !anonKey || !isValidUrl) {

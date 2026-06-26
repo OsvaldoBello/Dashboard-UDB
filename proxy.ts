@@ -86,7 +86,7 @@ export async function proxy(request: NextRequest) {
 
   // 3. Rate Limiting Estateless para Rotas Críticas (Login e Upload)
   if (isApiUpload || isApiLogin) {
-    const rateLimitCookieName = 'udb-rate-limit';
+    const rateLimitCookieName = isApiUpload ? 'udb-rate-limit-upload' : 'udb-rate-limit-login';
     const rateLimitCookie = request.cookies.get(rateLimitCookieName);
     const now = Date.now();
     const oneMinute = 60 * 1000;
@@ -102,11 +102,14 @@ export async function proxy(request: NextRequest) {
       }
     }
 
-    // Limite de 5 requisições por minuto
-    if (timestamps.length >= 5) {
+    // Limite diferenciado: 5 por minuto para login, 100 por minuto para upload (suporta lote de 30)
+    const limit = isApiUpload ? 100 : 5;
+    if (timestamps.length >= limit) {
       return new NextResponse(
         JSON.stringify({
-          error: 'Limite de requisições excedido. Tente novamente em um minuto.',
+          error: isApiUpload 
+            ? 'Limite de uploads excedido. Aguarde um minuto antes de enviar mais arquivos.'
+            : 'Limite de requisições excedido. Tente novamente em um minuto.',
         }),
         {
           status: 429,

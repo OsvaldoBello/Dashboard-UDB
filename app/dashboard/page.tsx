@@ -455,6 +455,15 @@ export default function DashboardPage() {
     let failCount = 0;
     let lastRepId = null;
 
+    // Obter o token da sessão uma única vez para evitar condições de corrida de refresh
+    let token = null;
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      token = session?.access_token;
+    } catch (sessionErr) {
+      console.warn('Erro ao carregar token da sessão:', sessionErr);
+    }
+
     for (let i = 0; i < fileArray.length; i++) {
       const file = fileArray[i];
       setUploadProgress({
@@ -467,10 +476,16 @@ export default function DashboardPage() {
       formData.append('file', file);
       formData.append('week', computedDateString);
 
+      const headersObj: Record<string, string> = {};
+      if (token) {
+        headersObj['Authorization'] = `Bearer ${token}`;
+      }
+
       try {
         const response = await fetch('/api/upload', {
           method: 'POST',
           body: formData,
+          headers: headersObj,
         });
 
         const data = await response.json();
