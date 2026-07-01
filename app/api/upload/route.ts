@@ -172,8 +172,26 @@ export async function POST(request: Request) {
       if (dotIndex !== -1) {
         parsedRepName = parsedRepName.substring(0, dotIndex);
       }
+      
+      // Detecção de região do nome do arquivo (ex: _MG, -SP, _RS no final do nome, case-insensitive)
+      let detectedRegion: string | null = null;
+      const regionMatch = parsedRepName.match(/[_-](RS|SP|MG)$/i);
+      if (regionMatch) {
+        detectedRegion = regionMatch[1].toUpperCase();
+        parsedRepName = parsedRepName.substring(0, regionMatch.index);
+      }
+
       // Remove prefixos comuns de timestamps e identificadores
-      parsedRepName = parsedRepName.replace(/^\d+_[a-zA-Z0-9]+_/g, '').replace(/_representante$/i, '').replace(/representante$/i, '').trim();
+      parsedRepName = parsedRepName.replace(/^\d+_[a-zA-Z0-9]+_/g, '');
+      // Se houver um número no início seguido de underscore (ex: 21321312_), removemos também
+      parsedRepName = parsedRepName.replace(/^\d+_/g, '');
+      
+      // Substituir underscores e hifens por espaços para normalizar o nome do representante (ex: João_Paulo ou Lucas-Silveira -> João Paulo ou Lucas Silveira)
+      parsedRepName = parsedRepName.replace(/[_-]/g, ' ');
+      
+      // Remover sufixos representantes
+      parsedRepName = parsedRepName.replace(/\srepresentante$/i, '').replace(/representante$/i, '').trim();
+
       // Capitalizar
       parsedRepName = parsedRepName.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
       repName = parsedRepName;
@@ -193,7 +211,11 @@ export async function POST(request: Request) {
       if (!representante) {
         const { data: newRep, error: repInsertError } = await supabase
           .from('representantes')
-          .insert({ nome: repName, usuario_id: usuarioId })
+          .insert({ 
+            nome: repName, 
+            usuario_id: usuarioId,
+            regiao: detectedRegion
+          })
           .select('id')
           .single();
 

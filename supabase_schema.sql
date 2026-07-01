@@ -27,7 +27,8 @@ CREATE TABLE public.representantes (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     nome TEXT NOT NULL,
     observacoes TEXT DEFAULT '', -- Dossiê / Observações qualitativas do representante
-    meta_aproveitamento NUMERIC(5, 2) DEFAULT 80.00, -- Meta de progresso padrão (ex: 80%)
+    meta_aproveitamento NUMERIC(5, 2) DEFAULT 95.00, -- Meta de progresso padrão (ex: 95%)
+    regiao TEXT DEFAULT NULL CHECK (regiao IS NULL OR regiao IN ('RS', 'SP', 'MG')), -- Região do representante (RS, SP, MG)
     usuario_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE DEFAULT auth.uid(),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     -- Restrição: Evita nomes duplicados globalmente no site

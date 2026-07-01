@@ -50,4 +50,55 @@ describe('Multi-Exportação e Consolidação', () => {
       'Status da Meta': 'Sem dados'
     });
   });
+
+  it('deve filtrar representantes por regiao', () => {
+    const reps = [
+      { id: '1', nome: 'Juliana Freitas', meta_aproveitamento: 95, regiao: 'RS' },
+      { id: '2', nome: 'Pedro Lima', meta_aproveitamento: 95, regiao: 'SP' },
+      { id: '3', nome: 'Ana Costa', meta_aproveitamento: 95, regiao: 'MG' }
+    ];
+
+    const filterRegion = (list: any[], region: string) => {
+      if (region === 'Todos') return list;
+      return list.filter(r => r.regiao === region);
+    };
+
+    expect(filterRegion(reps, 'RS')).toHaveLength(1);
+    expect(filterRegion(reps, 'RS')[0].nome).toBe('Juliana Freitas');
+    expect(filterRegion(reps, 'SP')).toHaveLength(1);
+    expect(filterRegion(reps, 'MG')).toHaveLength(1);
+    expect(filterRegion(reps, 'Todos')).toHaveLength(3);
+  });
+
+  it('deve extrair nome e regiao do nome do arquivo da planilha', () => {
+    const parseRepNameAndRegion = (fileName: string) => {
+      let parsedRepName = fileName;
+      const dotIndex = parsedRepName.lastIndexOf('.');
+      if (dotIndex !== -1) {
+        parsedRepName = parsedRepName.substring(0, dotIndex);
+      }
+      
+      let detectedRegion: string | null = null;
+      const regionMatch = parsedRepName.match(/[_-](RS|SP|MG)$/i);
+      if (regionMatch) {
+        detectedRegion = regionMatch[1].toUpperCase();
+        parsedRepName = parsedRepName.substring(0, regionMatch.index);
+      }
+
+      parsedRepName = parsedRepName.replace(/^\d+_[a-zA-Z0-9]+_/g, '');
+      parsedRepName = parsedRepName.replace(/^\d+_/g, '');
+      parsedRepName = parsedRepName.replace(/[_-]/g, ' ');
+      parsedRepName = parsedRepName.replace(/\srepresentante$/i, '').replace(/representante$/i, '').trim();
+
+      parsedRepName = parsedRepName.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+      
+      return { nome: parsedRepName, regiao: detectedRegion };
+    };
+
+    expect(parseRepNameAndRegion('21321312_João_Paulo_MG.xlsx')).toEqual({ nome: 'João Paulo', regiao: 'MG' });
+    expect(parseRepNameAndRegion('12345_Lucas-Silveira_RS.csv')).toEqual({ nome: 'Lucas Silveira', regiao: 'RS' });
+    expect(parseRepNameAndRegion('Pedro_Lima_SP.xlsx')).toEqual({ nome: 'Pedro Lima', regiao: 'SP' });
+    expect(parseRepNameAndRegion('Juliana_Freitas.xlsx')).toEqual({ nome: 'Juliana Freitas', regiao: null });
+  });
 });
+

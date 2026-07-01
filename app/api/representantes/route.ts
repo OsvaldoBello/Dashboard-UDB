@@ -13,7 +13,7 @@ export async function PATCH(request: Request) {
 
     // 2. Extrair e validar dados do body
     const body = await request.json();
-    const { id, observacoes, meta_aproveitamento } = body;
+    const { id, observacoes, meta_aproveitamento, regiao } = body;
 
     if (!id) {
       return NextResponse.json({ error: 'O ID do representante é obrigatório.' }, { status: 400 });
@@ -27,6 +27,9 @@ export async function PATCH(request: Request) {
       if (!isNaN(target)) {
         updateData.meta_aproveitamento = target;
       }
+    }
+    if (regiao !== undefined) {
+      updateData.regiao = regiao || null;
     }
 
     const { data, error } = await supabase
@@ -60,7 +63,7 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    const { nome, meta_aproveitamento } = body;
+    const { nome, meta_aproveitamento, regiao } = body;
 
     if (!nome || !nome.trim()) {
       return NextResponse.json({ error: 'O nome do representante é obrigatório.' }, { status: 400 });
@@ -70,7 +73,8 @@ export async function POST(request: Request) {
       .from('representantes')
       .insert({
         nome: nome.trim(),
-        meta_aproveitamento: meta_aproveitamento !== undefined ? parseFloat(meta_aproveitamento) : 80.00,
+        meta_aproveitamento: meta_aproveitamento !== undefined ? parseFloat(meta_aproveitamento) : 95.00,
+        regiao: regiao !== undefined ? regiao : null,
         usuario_id: user.id
       })
       .select()

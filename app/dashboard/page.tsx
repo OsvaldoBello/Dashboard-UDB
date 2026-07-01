@@ -9,7 +9,7 @@ import {
   AlertCircle, Trash2, Eye, BookOpen, Award, TrendingUp, RefreshCw,
   User, Users, Target, Save, FileText, BarChart3, ArrowRight, ClipboardList,
   PlusCircle, Trash, Lock, Key, X, Sliders, Shield, Loader2,
-  Sun, Moon, Download
+  Sun, Moon, Download, MapPin
 } from 'lucide-react';
 import { createSupabaseBrowserClient } from '@/lib/supabase-client';
 import * as XLSX from 'xlsx';
@@ -30,6 +30,7 @@ interface Representative {
   nome: string;
   observacoes: string;
   meta_aproveitamento: number;
+  regiao?: string;
   supervisor_email?: string;
   supervisorEmail?: string;
 }
@@ -86,8 +87,10 @@ export default function DashboardPage() {
 
   // Estados de Dossiê / Perfil
   const [repNotes, setRepNotes] = useState('');
-  const [repTarget, setRepTarget] = useState<number>(80);
+  const [repTarget, setRepTarget] = useState<number>(95);
+  const [repRegion, setRepRegion] = useState<string>('');
   const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const [exportRegionFilter, setExportRegionFilter] = useState<string>('Todos');
 
   // Estados de Comparação Week-over-Week
   const [compareWeekA, setCompareWeekA] = useState<string>('');
@@ -188,11 +191,11 @@ export default function DashboardPage() {
 
       // Buscar representantes. Se for admin, busca também o email do supervisor associado
       let repsResult: any[] = [];
-      let repsQuery = supabase.from('representantes').select('id, nome, observacoes, meta_aproveitamento');
+      let repsQuery = supabase.from('representantes').select('id, nome, observacoes, meta_aproveitamento, regiao');
       
       if (role === 'admin') {
         try {
-          const adminQuery = supabase.from('representantes').select('id, nome, observacoes, meta_aproveitamento, perfis(email)');
+          const adminQuery = supabase.from('representantes').select('id, nome, observacoes, meta_aproveitamento, regiao, perfis(email)');
           const { data, error } = await adminQuery.order('nome');
           if (error) throw error;
           repsResult = data || [];
@@ -212,7 +215,8 @@ export default function DashboardPage() {
         id: r.id,
         nome: r.nome,
         observacoes: r.observacoes || '',
-        meta_aproveitamento: Number(r.meta_aproveitamento ?? 80),
+        meta_aproveitamento: Number(r.meta_aproveitamento ?? 95),
+        regiao: r.regiao || '',
         supervisor_email: r.perfis?.email || undefined,
         supervisorEmail: r.perfis?.email || undefined
       }));
@@ -347,6 +351,7 @@ export default function DashboardPage() {
       if (rep) {
         setRepNotes(rep.observacoes);
         setRepTarget(rep.meta_aproveitamento);
+        setRepRegion(rep.regiao || '');
       }
     } else {
       setWeeklyReports([]);
@@ -538,10 +543,16 @@ export default function DashboardPage() {
     setIsExporting(true);
     setMessage(null);
     try {
-      const { data: reps, error: repsError } = await supabase
+      let repsQuery = supabase
         .from('representantes')
-        .select('id, nome, meta_aproveitamento')
+        .select('id, nome, meta_aproveitamento, regiao')
         .order('nome');
+
+      if (exportRegionFilter !== 'Todos') {
+        repsQuery = repsQuery.eq('regiao', exportRegionFilter);
+      }
+
+      const { data: reps, error: repsError } = await repsQuery;
 
       if (repsError) throw repsError;
       if (!reps || reps.length === 0) {
@@ -572,20 +583,22 @@ export default function DashboardPage() {
         };
       });
 
-      const historyRows = (reports || []).map(r => {
-        const rep = reps.find(rep => rep.id === r.representante_id);
-        return {
-          'Representante': rep ? rep.nome : 'Desconhecido',
-          'Semana (Referência)': formatISOWeekDisplay(r.semana_ano),
-          'Treinamentos Concluídos': r.treinamentos_concluidos,
-          'Total Treinamentos': r.total_treinamentos,
-          'Exames Concluídos': r.exames_concluidos,
-          'Total Exames': r.total_exames,
-          'Aproveitamento Geral (%)': r.aproveitamento_geral,
-          'Meta (%)': rep ? rep.meta_aproveitamento : 80,
-          'Observações': r.observacoes || ''
-        };
-      });
+      const historyRows = (reports || [])
+        .filter(r => reps.some(rep => rep.id === r.representante_id))
+        .map(r => {
+          const rep = reps.find(rep => rep.id === r.representante_id);
+          return {
+            'Representante': rep ? rep.nome : 'Desconhecido',
+            'Semana (Referência)': formatISOWeekDisplay(r.semana_ano),
+            'Treinamentos Concluídos': r.treinamentos_concluidos,
+            'Total Treinamentos': r.total_treinamentos,
+            'Exames Concluídos': r.exames_concluidos,
+            'Total Exames': r.total_exames,
+            'Aproveitamento Geral (%)': r.aproveitamento_geral,
+            'Meta (%)': rep ? rep.meta_aproveitamento : 95,
+            'Observações': r.observacoes || ''
+          };
+        });
 
       const wb = XLSX.utils.book_new();
 
@@ -641,7 +654,8 @@ export default function DashboardPage() {
         }
       }
 
-      XLSX.writeFile(wb, 'Auditoria_Consolidada_UBD.xlsx');
+      const suffix = exportRegionFilter !== 'Todos' ? `_${exportRegionFilter}` : '';
+      XLSX.writeFile(wb, `Auditoria_Consolidada_UBD${suffix}.xlsx`);
       setMessage({ type: 'success', text: 'Relatório consolidado exportado com sucesso!' });
     } catch (err: any) {
       console.error('Erro ao exportar consolidado:', err);
@@ -691,7 +705,7 @@ export default function DashboardPage() {
           'Exames Concluídos': r.exames_concluidos,
           'Total Exames': r.total_exames,
           'Aproveitamento Geral (%)': r.aproveitamento_geral,
-          'Meta (%)': rep.meta_aproveitamento,
+          'Meta (%)': rep.meta_aproveitamento || 95,
           'Observações': r.observacoes || ''
         }));
 
@@ -739,7 +753,8 @@ export default function DashboardPage() {
       const url = URL.createObjectURL(zipContent);
       const link = document.createElement('a');
       link.href = url;
-      link.download = 'Relatorios_Individuais_Representantes.zip';
+      const suffix = exportRegionFilter !== 'Todos' ? `_${exportRegionFilter}` : '';
+      link.download = `Relatorios_Individuais_Representantes${suffix}.zip`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -838,6 +853,7 @@ export default function DashboardPage() {
           id: selectedRepId,
           observacoes: repNotes,
           meta_aproveitamento: repTarget,
+          regiao: repRegion || null,
         }),
       });
 
@@ -852,7 +868,8 @@ export default function DashboardPage() {
       setRepresentatives(prev => prev.map(r => r.id === selectedRepId ? {
         ...r,
         observacoes: repNotes,
-        meta_aproveitamento: repTarget
+        meta_aproveitamento: repTarget,
+        regiao: repRegion || '',
       } : r));
     } catch (err: any) {
       setMessage({ type: 'error', text: err.message || 'Falha ao salvar dossiê.' });
@@ -914,7 +931,7 @@ export default function DashboardPage() {
       .map(r => ({
         semana: formatISOWeekDisplay(r.semana_ano),
         Aproveitamento: r.aproveitamento_geral,
-        Meta: activeRep?.meta_aproveitamento || 80
+        Meta: activeRep?.meta_aproveitamento || 95
       }));
   }, [weeklyReports, activeRep]);
 
@@ -1316,45 +1333,157 @@ export default function DashboardPage() {
                 {representatives.length}
               </span>
             </div>
-            <div className="space-y-2 max-h-[380px] overflow-y-auto pr-1 custom-scrollbar">
+            <div className="space-y-4 max-h-[500px] overflow-y-auto pr-1 custom-scrollbar">
               {representatives.length > 0 ? (
-                representatives.map((rep) => {
-                  const isSelected = selectedRepId === rep.id;
+                (() => {
+                  const repsRS = representatives.filter(r => r.regiao === 'RS');
+                  const repsSP = representatives.filter(r => r.regiao === 'SP');
+                  const repsMG = representatives.filter(r => r.regiao === 'MG');
+                  const repsNone = representatives.filter(r => !r.regiao || (r.regiao !== 'RS' && r.regiao !== 'SP' && r.regiao !== 'MG'));
+
+                  const regionsConfig = [
+                    {
+                      id: 'RS',
+                      name: 'Rio Grande do Sul (RS)',
+                      reps: repsRS,
+                      colorClass: 'border-blue-200 dark:border-blue-900/30 bg-blue-50/10 dark:bg-blue-950/5',
+                      headerColor: 'text-blue-600 dark:text-blue-400',
+                      iconColor: 'text-blue-500',
+                      itemSelectedClass: 'border-blue-500 bg-blue-50/50 dark:bg-blue-950/20 text-blue-700 dark:text-slate-100 shadow-sm ring-1 ring-blue-500/20',
+                      itemHoverClass: 'hover:border-blue-300 dark:hover:border-blue-800 bg-slate-50/50 dark:bg-slate-950/40 hover:bg-blue-50/10 dark:hover:bg-blue-950/20'
+                    },
+                    {
+                      id: 'SP',
+                      name: 'São Paulo (SP)',
+                      reps: repsSP,
+                      colorClass: 'border-purple-200 dark:border-purple-900/30 bg-purple-50/10 dark:bg-purple-950/5',
+                      headerColor: 'text-purple-600 dark:text-purple-400',
+                      iconColor: 'text-purple-500',
+                      itemSelectedClass: 'border-purple-500 bg-purple-50/50 dark:bg-purple-950/20 text-purple-700 dark:text-slate-100 shadow-sm ring-1 ring-purple-500/20',
+                      itemHoverClass: 'hover:border-purple-300 dark:hover:border-purple-800 bg-slate-50/50 dark:bg-slate-950/40 hover:bg-purple-50/10 dark:hover:bg-purple-955/20'
+                    },
+                    {
+                      id: 'MG',
+                      name: 'Minas Gerais (MG)',
+                      reps: repsMG,
+                      colorClass: 'border-amber-200 dark:border-amber-900/30 bg-amber-50/10 dark:bg-amber-955/5',
+                      headerColor: 'text-amber-600 dark:text-amber-400',
+                      iconColor: 'text-amber-500',
+                      itemSelectedClass: 'border-amber-500 bg-amber-50/50 dark:bg-amber-955/20 text-amber-700 dark:text-slate-100 shadow-sm ring-1 ring-amber-500/20',
+                      itemHoverClass: 'hover:border-amber-300 dark:hover:border-amber-800 bg-slate-50/50 dark:bg-slate-950/40 hover:bg-amber-50/10 dark:hover:bg-amber-955/20'
+                    }
+                  ];
+
                   return (
-                    <div
-                      key={rep.id}
-                      onClick={() => setSelectedRepId(rep.id)}
-                      className={`p-3 border rounded-xl flex items-center justify-between cursor-pointer transition ${
-                        isSelected 
-                          ? 'border-blue-500 bg-blue-50/50 dark:bg-gradient-to-r dark:from-blue-950/20 dark:to-emerald-950/20 text-blue-700 dark:text-slate-100 shadow-sm ring-1 ring-blue-500/20 dark:ring-emerald-500/30' 
-                          : 'border-slate-200 dark:border-slate-855 hover:border-slate-300 dark:hover:border-slate-800 bg-slate-50/50 dark:bg-slate-950/40 hover:bg-slate-100/70 dark:hover:bg-slate-950/60 text-slate-600 dark:text-slate-400'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <div className={`p-1.5 rounded-lg ${isSelected ? 'bg-blue-100 dark:bg-blue-950/30 text-blue-600 dark:text-blue-400' : 'bg-slate-100 dark:bg-slate-900 text-slate-500'}`}>
-                          <User size={14} />
+                    <div className="space-y-4">
+                      {regionsConfig.map((reg) => (
+                        <div key={reg.id} className={`p-3 border rounded-2xl ${reg.colorClass} space-y-2`}>
+                          <div className="flex items-center gap-1.5 pb-1 border-b border-slate-200/50 dark:border-slate-800/50">
+                            <MapPin size={12} className={reg.iconColor} />
+                            <span className={`text-[10px] font-black uppercase tracking-wider ${reg.headerColor}`}>{reg.name}</span>
+                            <span className="text-[9px] font-bold px-1.5 py-0.2 bg-slate-100 dark:bg-slate-900 border border-slate-200/60 dark:border-slate-800 text-slate-555 dark:text-slate-400 rounded-full ml-auto">
+                              {reg.reps.length}
+                            </span>
+                          </div>
+                          
+                          <div className="space-y-1.5">
+                            {reg.reps.length > 0 ? (
+                              reg.reps.map((rep) => {
+                                const isSelected = selectedRepId === rep.id;
+                                return (
+                                  <div
+                                    key={rep.id}
+                                    onClick={() => setSelectedRepId(rep.id)}
+                                    className={`p-2.5 border rounded-xl flex items-center justify-between cursor-pointer transition text-xs ${
+                                      isSelected ? reg.itemSelectedClass : `border-slate-200/80 dark:border-slate-855 text-slate-600 dark:text-slate-400 ${reg.itemHoverClass}`
+                                    }`}
+                                  >
+                                    <div className="flex items-center gap-2 min-w-0">
+                                      <div className={`p-1 rounded-lg ${isSelected ? 'bg-white/20 text-white' : 'bg-slate-100 dark:bg-slate-900 text-slate-500'}`}>
+                                        <User size={12} />
+                                      </div>
+                                      <div className="flex flex-col min-w-0">
+                                        <span className="font-bold truncate">{rep.nome}</span>
+                                        {userRole === 'admin' && (rep.supervisorEmail || rep.supervisor_email) && (
+                                          <span className="text-[8px] text-slate-550 dark:text-slate-500 truncate">{rep.supervisorEmail || rep.supervisor_email}</span>
+                                        )}
+                                      </div>
+                                    </div>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleDeleteRepresentative(rep.id);
+                                      }}
+                                      className="p-1 hover:text-red-400 transition rounded"
+                                      title="Deletar Representante"
+                                    >
+                                      <Trash size={10} />
+                                    </button>
+                                  </div>
+                                );
+                              })
+                            ) : (
+                              <div className="text-center py-2 text-[10px] text-slate-400 italic">
+                                Nenhum representante nesta região
+                              </div>
+                            )}
+                          </div>
                         </div>
-                        <div className="flex flex-col min-w-0">
-                          <span className="text-xs font-bold truncate">{rep.nome}</span>
-                          {userRole === 'admin' && (rep.supervisorEmail || rep.supervisor_email) && (
-                            <span className="text-[9px] text-slate-500 truncate">{rep.supervisorEmail || rep.supervisor_email}</span>
-                          )}
+                      ))}
+
+                      {repsNone.length > 0 && (
+                        <div className="p-3 border rounded-2xl border-slate-200 dark:border-slate-800 bg-slate-50/30 dark:bg-slate-900/10 space-y-2">
+                          <div className="flex items-center gap-1.5 pb-1 border-b border-slate-200/50 dark:border-slate-800/50">
+                            <MapPin size={12} className="text-slate-400" />
+                            <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">Sem Região Definida</span>
+                            <span className="text-[9px] font-bold px-1.5 py-0.2 bg-slate-100 dark:bg-slate-900 border border-slate-200/60 dark:border-slate-800 text-slate-555 dark:text-slate-400 rounded-full ml-auto">
+                              {repsNone.length}
+                            </span>
+                          </div>
+                          
+                          <div className="space-y-1.5">
+                            {repsNone.map((rep) => {
+                              const isSelected = selectedRepId === rep.id;
+                              return (
+                                <div
+                                  key={rep.id}
+                                  onClick={() => setSelectedRepId(rep.id)}
+                                  className={`p-2.5 border rounded-xl flex items-center justify-between cursor-pointer transition text-xs ${
+                                    isSelected 
+                                      ? 'border-slate-500 bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-100 shadow-sm' 
+                                      : 'border-slate-200 dark:border-slate-855 hover:border-slate-350 dark:hover:border-slate-800 bg-slate-50/50 dark:bg-slate-950/40 text-slate-655 dark:text-slate-400'
+                                  }`}
+                                >
+                                  <div className="flex items-center gap-2 min-w-0">
+                                    <div className={`p-1 rounded-lg ${isSelected ? 'bg-white/20 text-white' : 'bg-slate-100 dark:bg-slate-900 text-slate-500'}`}>
+                                      <User size={12} />
+                                    </div>
+                                    <div className="flex flex-col min-w-0">
+                                      <span className="font-bold truncate">{rep.nome}</span>
+                                      {userRole === 'admin' && (rep.supervisorEmail || rep.supervisor_email) && (
+                                        <span className="text-[8px] text-slate-550 dark:text-slate-500 truncate">{rep.supervisorEmail || rep.supervisor_email}</span>
+                                      )}
+                                    </div>
+                                  </div>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleDeleteRepresentative(rep.id);
+                                    }}
+                                    className="p-1 hover:text-red-400 transition rounded"
+                                    title="Deletar Representante"
+                                  >
+                                    <Trash size={10} />
+                                  </button>
+                                </div>
+                              );
+                            })}
+                          </div>
                         </div>
-                      </div>
-                      
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDeleteRepresentative(rep.id);
-                        }}
-                        className="p-1 hover:text-red-400 transition rounded"
-                        title="Deletar Representante"
-                      >
-                        <Trash size={12} />
-                      </button>
+                      )}
                     </div>
                   );
-                })
+                })()
               ) : (
                 <div className="text-center py-6 text-xs text-slate-500">
                   Nenhum representante cadastrado. Envie uma planilha de treinamentos para cadastrar automaticamente.
@@ -1391,7 +1520,7 @@ export default function DashboardPage() {
                   </div>
                   <div className="h-8 w-px bg-slate-850" />
                   <div className="text-center">
-                    <div className="text-2xl font-black text-blue-500 dark:text-blue-400">{activeRep.meta_aproveitamento}%</div>
+                    <div className="text-2xl font-black text-blue-500 dark:text-blue-400">{activeRep.meta_aproveitamento || 95}%</div>
                     <div className="text-[9px] uppercase font-bold text-slate-550 tracking-wider">Meta Definida</div>
                   </div>
                 </div>
@@ -1487,7 +1616,7 @@ export default function DashboardPage() {
                                strokeWidth={3}
                                activeDot={{ r: 6 }} 
                              />
-                             <ReferenceLine y={activeRep.meta_aproveitamento} label={{ value: `Meta (${activeRep.meta_aproveitamento}%)`, fill: '#10b981', fontSize: 10, position: 'top' }} stroke="#10b981" strokeDasharray="3 3" />
+                             <ReferenceLine y={activeRep.meta_aproveitamento || 95} label={{ value: `Meta (${activeRep.meta_aproveitamento || 95}%)`, fill: '#10b981', fontSize: 10, position: 'top' }} stroke="#10b981" strokeDasharray="3 3" />
                            </LineChart>
                         </ResponsiveContainer>
                       ) : (
@@ -1534,7 +1663,7 @@ export default function DashboardPage() {
                                     </td>
                                     <td className="py-3 px-3 text-center">
                                       <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                                        report.aproveitamento_geral >= activeRep.meta_aproveitamento
+                                        report.aproveitamento_geral >= (activeRep.meta_aproveitamento || 95)
                                           ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-900/30'
                                           : 'bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-900/30'
                                       }`}>
@@ -1751,8 +1880,8 @@ export default function DashboardPage() {
 
                   <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
                     
-                    {/* META (4 COLS) */}
-                    <div className="md:col-span-4 space-y-1.5">
+                    {/* META (3 COLS) */}
+                    <div className="md:col-span-3 space-y-1.5">
                       <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider flex items-center gap-1">
                         <Target size={12} className="text-emerald-500 dark:text-emerald-400" />
                         Meta de Aproveitamento
@@ -1770,8 +1899,26 @@ export default function DashboardPage() {
                       </div>
                     </div>
 
-                    {/* OBSERVAÇÕES (8 COLS) */}
-                    <div className="md:col-span-8 space-y-1.5">
+                    {/* REGIÃO (3 COLS) */}
+                    <div className="md:col-span-3 space-y-1.5">
+                      <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                        <MapPin size={12} className="text-blue-500 dark:text-blue-400" />
+                        Região
+                      </label>
+                      <select
+                        value={repRegion}
+                        onChange={(e) => setRepRegion(e.target.value)}
+                        className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-855 rounded-xl text-xs font-bold focus:outline-none focus:ring-1 focus:ring-blue-500 text-slate-800 dark:text-slate-300"
+                      >
+                        <option value="">Selecione...</option>
+                        <option value="RS">RS</option>
+                        <option value="SP">SP</option>
+                        <option value="MG">MG</option>
+                      </select>
+                    </div>
+
+                    {/* OBSERVAÇÕES (6 COLS) */}
+                    <div className="md:col-span-6 space-y-1.5">
                       <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider flex items-center gap-1">
                         <FileText size={12} className="text-blue-555 dark:text-blue-400" />
                         Notas e Observações de Supervisão
@@ -1880,13 +2027,36 @@ export default function DashboardPage() {
                 <div className="p-5 bg-white dark:bg-slate-900/50 border border-slate-200/80 dark:border-slate-800 rounded-2xl space-y-6 shadow-xl animate-fadeIn">
                   
                   <div className="border-b border-slate-200 dark:border-slate-800 pb-4">
-                    <h3 className="text-xs font-bold text-slate-850 dark:text-slate-200 uppercase tracking-wider flex items-center gap-1.5">
+                    <h3 className="text-xs font-bold text-slate-855 dark:text-slate-200 uppercase tracking-wider flex items-center gap-1.5">
                       <Download size={14} className="text-emerald-500 dark:text-emerald-400" />
                       Central de Exportação de Resultados
                     </h3>
                     <p className="text-[10px] text-slate-600 dark:text-slate-400 mt-0.5">
                       Gere e faça o download de relatórios detalhados de todos os representantes comerciais cadastrados.
                     </p>
+                  </div>
+
+                  {/* Filtro de Região para Exportação */}
+                  <div className="p-4 bg-slate-50 dark:bg-slate-950/20 border border-slate-200 dark:border-slate-850 rounded-xl space-y-2.5">
+                    <label className="block text-[10px] font-bold text-slate-550 dark:text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                      <MapPin size={12} className="text-blue-500 dark:text-blue-400" />
+                      Filtrar Região para Exportação
+                    </label>
+                    <div className="flex gap-2">
+                      {['Todos', 'RS', 'SP', 'MG'].map((reg) => (
+                        <button
+                          key={reg}
+                          onClick={() => setExportRegionFilter(reg)}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-bold transition border ${
+                            exportRegionFilter === reg
+                              ? 'bg-blue-600 border-blue-600 text-white shadow-sm'
+                              : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-850'
+                          }`}
+                        >
+                          {reg === 'Todos' ? 'Todas as Regiões' : reg}
+                        </button>
+                      ))}
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
