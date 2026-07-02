@@ -79,7 +79,7 @@ describe('Multi-Exportação e Consolidação', () => {
       }
       
       let detectedRegion: string | null = null;
-      const regionMatch = parsedRepName.match(/[_-](RS|SP|MG)$/i);
+      const regionMatch = parsedRepName.match(/[_\s-]+(RS|SP|MG)(?![a-zA-Z])/i);
       if (regionMatch) {
         detectedRegion = regionMatch[1].toUpperCase();
         parsedRepName = parsedRepName.substring(0, regionMatch.index);
@@ -90,7 +90,10 @@ describe('Multi-Exportação e Consolidação', () => {
       parsedRepName = parsedRepName.replace(/[_-]/g, ' ');
       parsedRepName = parsedRepName.replace(/\srepresentante$/i, '').replace(/representante$/i, '').trim();
 
-      parsedRepName = parsedRepName.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+      parsedRepName = parsedRepName.split(' ')
+        .filter(w => w.length > 0)
+        .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+        .join(' ');
       
       return { nome: parsedRepName, regiao: detectedRegion };
     };
@@ -99,6 +102,12 @@ describe('Multi-Exportação e Consolidação', () => {
     expect(parseRepNameAndRegion('12345_Lucas-Silveira_RS.csv')).toEqual({ nome: 'Lucas Silveira', regiao: 'RS' });
     expect(parseRepNameAndRegion('Pedro_Lima_SP.xlsx')).toEqual({ nome: 'Pedro Lima', regiao: 'SP' });
     expect(parseRepNameAndRegion('Juliana_Freitas.xlsx')).toEqual({ nome: 'Juliana Freitas', regiao: null });
+    expect(parseRepNameAndRegion('Jorge Rubens RS.xlsx')).toEqual({ nome: 'Jorge Rubens', regiao: 'RS' });
+    expect(parseRepNameAndRegion('Jorge Rubens SP.csv')).toEqual({ nome: 'Jorge Rubens', regiao: 'SP' });
+    expect(parseRepNameAndRegion('Jorge Rubens MG.xlsx')).toEqual({ nome: 'Jorge Rubens', regiao: 'MG' });
+    expect(parseRepNameAndRegion('JOÃO BASTOS NEVES SP (4).xlsx')).toEqual({ nome: 'João Bastos Neves', regiao: 'SP' });
+    expect(parseRepNameAndRegion('JOÃO BASTOS NEVES SP (4)')).toEqual({ nome: 'João Bastos Neves', regiao: 'SP' });
+    expect(parseRepNameAndRegion('PEDRO_LIMA_SP.xlsx')).toEqual({ nome: 'Pedro Lima', regiao: 'SP' });
   });
 });
 

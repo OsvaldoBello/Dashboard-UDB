@@ -175,7 +175,7 @@ export async function POST(request: Request) {
       
       // Detecção de região do nome do arquivo (ex: _MG, -SP, _RS no final do nome, case-insensitive)
       let detectedRegion: string | null = null;
-      const regionMatch = parsedRepName.match(/[_-](RS|SP|MG)$/i);
+      const regionMatch = parsedRepName.match(/[_\s-]+(RS|SP|MG)(?![a-zA-Z])/i);
       if (regionMatch) {
         detectedRegion = regionMatch[1].toUpperCase();
         parsedRepName = parsedRepName.substring(0, regionMatch.index);
@@ -192,8 +192,11 @@ export async function POST(request: Request) {
       // Remover sufixos representantes
       parsedRepName = parsedRepName.replace(/\srepresentante$/i, '').replace(/representante$/i, '').trim();
 
-      // Capitalizar
-      parsedRepName = parsedRepName.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+      // Capitalizar (Primeira letra maiúscula, restante minúscula)
+      parsedRepName = parsedRepName.split(' ')
+        .filter(w => w.length > 0)
+        .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+        .join(' ');
       repName = parsedRepName;
 
       // Buscar ou cadastrar representante
