@@ -12,7 +12,7 @@ const buildConsolidatedSummary = (reps: any[], reports: any[]) => {
       'Aproveitamento Geral (%)': latestReport ? `${latestReport.aproveitamento_geral.toFixed(1)}%` : '0.0%',
       'Meta Definida (%)': `${rep.meta_aproveitamento}%`,
       'Status da Meta': latestReport 
-        ? (latestReport.aproveitamento_geral >= rep.meta_aproveitamento ? 'Meta Atingida' : 'Abaixo da Meta') 
+        ? (Number(latestReport.aproveitamento_geral.toFixed(1)) >= rep.meta_aproveitamento ? 'Meta Atingida' : 'Abaixo da Meta') 
         : 'Sem dados'
     };
   });
@@ -108,6 +108,25 @@ describe('Multi-Exportação e Consolidação', () => {
     expect(parseRepNameAndRegion('JOÃO BASTOS NEVES SP (4).xlsx')).toEqual({ nome: 'João Bastos Neves', regiao: 'SP' });
     expect(parseRepNameAndRegion('JOÃO BASTOS NEVES SP (4)')).toEqual({ nome: 'João Bastos Neves', regiao: 'SP' });
     expect(parseRepNameAndRegion('PEDRO_LIMA_SP.xlsx')).toEqual({ nome: 'Pedro Lima', regiao: 'SP' });
+  });
+
+  it('deve atingir a meta se o aproveitamento arredondado for igual à meta (ex: 94.96% arredonda para 95.0% com meta 95%)', () => {
+    const reps = [
+      { id: '1', nome: 'Christian Severo', meta_aproveitamento: 95 }
+    ];
+    const reports = [
+      { representante_id: '1', semana_ano: '2026-07-01', aproveitamento_geral: 94.96 }
+    ];
+
+    const res = buildConsolidatedSummary(reps, reports);
+    expect(res).toHaveLength(1);
+    expect(res[0]).toEqual({
+      'Representante': 'Christian Severo',
+      'Última Semana Ativa': '2026-07-01',
+      'Aproveitamento Geral (%)': '95.0%',
+      'Meta Definida (%)': '95%',
+      'Status da Meta': 'Meta Atingida'
+    });
   });
 });
 

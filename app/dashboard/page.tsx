@@ -578,7 +578,7 @@ export default function DashboardPage() {
           'Aproveitamento Geral (%)': latestReport ? `${latestReport.aproveitamento_geral.toFixed(1)}%` : '0.0%',
           'Meta Definida (%)': `${rep.meta_aproveitamento}%`,
           'Status da Meta': latestReport 
-            ? (latestReport.aproveitamento_geral >= rep.meta_aproveitamento ? 'Meta Atingida' : 'Abaixo da Meta') 
+            ? (Number(latestReport.aproveitamento_geral.toFixed(1)) >= rep.meta_aproveitamento ? 'Meta Atingida' : 'Abaixo da Meta') 
             : 'Sem dados'
         };
       });
@@ -1663,7 +1663,7 @@ export default function DashboardPage() {
                                     </td>
                                     <td className="py-3 px-3 text-center">
                                       <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                                        report.aproveitamento_geral >= (activeRep.meta_aproveitamento || 95)
+                                        Number(report.aproveitamento_geral.toFixed(1)) >= (activeRep.meta_aproveitamento || 95)
                                           ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-900/30'
                                           : 'bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-900/30'
                                       }`}>
