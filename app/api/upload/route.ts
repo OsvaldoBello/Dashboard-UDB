@@ -141,9 +141,27 @@ export async function POST(request: Request) {
       }
     }
 
-    const totalAll = totalContents + totalExams;
+    // Obter totais de catálogo para aproveitamento absoluto
+    let catalogAulas = 136;
+    let catalogExames = 112;
+    try {
+      const { data: config } = await supabase
+        .from('configuracoes')
+        .select('total_aulas, total_exames')
+        .eq('id', 1)
+        .maybeSingle();
+      if (config) {
+        catalogAulas = config.total_aulas;
+        catalogExames = config.total_exames;
+      }
+    } catch (err) {
+      console.warn('Erro ao ler configuracoes do catálogo para upload:', err);
+    }
+
+    const totalCatalogo = catalogAulas + catalogExames;
     const completedAll = completedContents + completedExams;
-    const aproveitamentoGeral = totalAll > 0 ? parseFloat(((completedAll / totalAll) * 100).toFixed(2)) : 0.00;
+    const aproveitamentoGeral = totalCatalogo > 0 ? parseFloat(((completedAll / totalCatalogo) * 100).toFixed(2)) : 0.00;
+
 
     // 5. Determinar Nome do Representante e ID
     let finalRepresentanteId: string;

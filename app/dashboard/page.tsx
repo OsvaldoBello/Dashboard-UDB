@@ -99,6 +99,11 @@ export default function DashboardPage() {
   const [comparisonTypeFilter, setComparisonTypeFilter] = useState('Todos');
   const [comparisonStatusFilter, setComparisonStatusFilter] = useState('Todos');
 
+  // Estados de Configuração do Catálogo UBD
+  const [catalogTotalAulas, setCatalogTotalAulas] = useState<number>(136);
+  const [catalogTotalExames, setCatalogTotalExames] = useState<number>(112);
+  const [isSavingConfig, setIsSavingConfig] = useState(false);
+
   // Estados do Visualizador de Detalhes da Semana Selecionada
   const [selectedWeeklyReport, setSelectedWeeklyReport] = useState<WeeklyReport | null>(null);
 
@@ -190,6 +195,21 @@ export default function DashboardPage() {
       } catch (e) {
         console.warn('Tabela perfis indisponível:', e);
       }
+      // Buscar configurações do catálogo com fallback seguro
+      try {
+        const { data: config } = await supabase
+          .from('configuracoes')
+          .select('total_aulas, total_exames')
+          .eq('id', 1)
+          .maybeSingle();
+        if (config) {
+          setCatalogTotalAulas(config.total_aulas);
+          setCatalogTotalExames(config.total_exames);
+        }
+      } catch (e) {
+        console.warn('Erro ao carregar configurações do catálogo:', e);
+      }
+
       setUserRole(role);
 
       // Buscar representantes. Se for admin, busca também o email do supervisor associado
@@ -573,12 +593,21 @@ export default function DashboardPage() {
         const repReports = (reports || []).filter(r => r.representante_id === rep.id);
         const latestReport = repReports[0] || null;
 
+        // Calcular Aproveitamento Relativo
+        let relativeProgress = '0.0%';
+        if (latestReport) {
+          const totalInitiated = (latestReport.total_treinamentos || 0) + (latestReport.total_exames || 0);
+          const completed = (latestReport.treinamentos_concluidos || 0) + (latestReport.exames_concluidos || 0);
+          relativeProgress = totalInitiated > 0 ? `${((completed / totalInitiated) * 100).toFixed(1)}%` : '0.0%';
+        }
+
         return {
           'Representante': rep.nome,
           'Última Semana Ativa': latestReport ? formatISOWeekDisplay(latestReport.semana_ano) : 'Sem dados',
           'Treinamentos Concluídos': latestReport ? `${latestReport.treinamentos_concluidos} de ${latestReport.total_treinamentos}` : '0 de 0',
           'Exames Concluídos': latestReport ? `${latestReport.exames_concluidos} de ${latestReport.total_exames}` : '0 de 0',
           'Aproveitamento Geral (%)': latestReport ? `${latestReport.aproveitamento_geral.toFixed(1)}%` : '0.0%',
+          'Aproveitamento Relativo (%)': relativeProgress,
           'Meta Definida (%)': `${rep.meta_aproveitamento}%`,
           'Status da Meta': latestReport 
             ? (Number(latestReport.aproveitamento_geral.toFixed(1)) >= rep.meta_aproveitamento ? 'Meta Atingida' : 'Abaixo da Meta') 
@@ -590,6 +619,10 @@ export default function DashboardPage() {
         .filter(r => reps.some(rep => rep.id === r.representante_id))
         .map(r => {
           const rep = reps.find(rep => rep.id === r.representante_id);
+          const totalInitiated = (r.total_treinamentos || 0) + (r.total_exames || 0);
+          const completed = (r.treinamentos_concluidos || 0) + (r.exames_concluidos || 0);
+          const relativeProgress = totalInitiated > 0 ? parseFloat(((completed / totalInitiated) * 100).toFixed(2)) : 0.00;
+
           return {
             'Representante': rep ? rep.nome : 'Desconhecido',
             'Semana (Referência)': formatISOWeekDisplay(r.semana_ano),
@@ -598,6 +631,7 @@ export default function DashboardPage() {
             'Exames Concluídos': r.exames_concluidos,
             'Total Exames': r.total_exames,
             'Aproveitamento Geral (%)': r.aproveitamento_geral,
+            'Aproveitamento Relativo (%)': relativeProgress,
             'Meta (%)': rep ? rep.meta_aproveitamento : 95,
             'Observações': r.observacoes || ''
           };
@@ -701,16 +735,23 @@ export default function DashboardPage() {
 
         const repWb = XLSX.utils.book_new();
 
-        const historyRows = repReports.map(r => ({
-          'Semana (Referência)': formatISOWeekDisplay(r.semana_ano),
-          'Treinamentos Concluídos': r.treinamentos_concluidos,
-          'Total Treinamentos': r.total_treinamentos,
-          'Exames Concluídos': r.exames_concluidos,
-          'Total Exames': r.total_exames,
-          'Aproveitamento Geral (%)': r.aproveitamento_geral,
-          'Meta (%)': rep.meta_aproveitamento || 95,
-          'Observações': r.observacoes || ''
-        }));
+        const historyRows = repReports.map(r => {
+          const totalInitiated = (r.total_treinamentos || 0) + (r.total_exames || 0);
+          const completed = (r.treinamentos_concluidos || 0) + (r.exames_concluidos || 0);
+          const relativeProgress = totalInitiated > 0 ? parseFloat(((completed / totalInitiated) * 100).toFixed(2)) : 0.00;
+
+          return {
+            'Semana (Referência)': formatISOWeekDisplay(r.semana_ano),
+            'Treinamentos Concluídos': r.treinamentos_concluidos,
+            'Total Treinamentos': r.total_treinamentos,
+            'Exames Concluídos': r.exames_concluidos,
+            'Total Exames': r.total_exames,
+            'Aproveitamento Geral (%)': r.aproveitamento_geral,
+            'Aproveitamento Relativo (%)': relativeProgress,
+            'Meta (%)': rep.meta_aproveitamento || 95,
+            'Observações': r.observacoes || ''
+          };
+        });
 
         const wsHist = XLSX.utils.json_to_sheet(historyRows);
         wsHist['!cols'] = [
@@ -720,6 +761,7 @@ export default function DashboardPage() {
           { wch: 18 },
           { wch: 15 },
           { wch: 25 },
+          { wch: 25 }, // Aproveitamento Relativo
           { wch: 12 },
           { wch: 35 }
         ];
@@ -818,6 +860,51 @@ export default function DashboardPage() {
       setMessage({ type: 'error', text: err.message || 'Erro inesperado.' });
     } finally {
       setIsSavingManual(false);
+    }
+  };
+
+  // Salvar configurações do catálogo UBD e atualizar histórico de relatórios
+  const handleSaveCatalogConfig = async () => {
+    setIsSavingConfig(true);
+    setMessage(null);
+    try {
+      // 1. Salvar configurações no Supabase
+      const { error: configError } = await supabase
+        .from('configuracoes')
+        .upsert({ id: 1, total_aulas: catalogTotalAulas, total_exames: catalogTotalExames });
+
+      if (configError) throw configError;
+
+      // 2. Atualizar todos os relatórios semanais existentes com a nova porcentagem
+      const totalCatalogo = catalogTotalAulas + catalogTotalExames;
+      const { data: reports, error: reportsError } = await supabase
+        .from('relatorios_semanais')
+        .select('id, treinamentos_concluidos, exames_concluidos');
+        
+      if (reportsError) throw reportsError;
+      
+      if (reports && reports.length > 0) {
+        const updates = reports.map(r => {
+          const completed = (r.treinamentos_concluidos || 0) + (r.exames_concluidos || 0);
+          const aproveitamentoGeral = totalCatalogo > 0 
+            ? parseFloat(((completed / totalCatalogo) * 100).toFixed(2)) 
+            : 0.00;
+          return supabase
+            .from('relatorios_semanais')
+            .update({ aproveitamento_geral: aproveitamentoGeral })
+            .eq('id', r.id);
+        });
+        
+        await Promise.all(updates);
+      }
+
+      setMessage({ type: 'success', text: 'Configurações salvas e histórico de aproveitamento atualizado com sucesso!' });
+      await loadInitialData();
+    } catch (err: any) {
+      console.error('Erro ao salvar configurações do catálogo:', err);
+      setMessage({ type: 'error', text: err.message || 'Falha ao salvar configurações do catálogo.' });
+    } finally {
+      setIsSavingConfig(false);
     }
   };
 
@@ -938,11 +1025,10 @@ export default function DashboardPage() {
       }));
   }, [weeklyReports, activeRep]);
 
-  // Média de aproveitamento geral histórico do representante ativo
-  const averageAproveitamento = useMemo(() => {
+  // Aproveitamento geral mais recente do representante ativo
+  const latestAproveitamento = useMemo(() => {
     if (weeklyReports.length === 0) return 0;
-    const total = weeklyReports.reduce((acc, curr) => acc + curr.aproveitamento_geral, 0);
-    return parseFloat((total / weeklyReports.length).toFixed(1));
+    return Number(weeklyReports[0].aproveitamento_geral.toFixed(1));
   }, [weeklyReports]);
 
   // Análise Week-over-Week
@@ -1548,10 +1634,10 @@ export default function DashboardPage() {
                   </p>
                 </div>
 
-                <div className="flex items-center gap-8 bg-slate-50 dark:bg-slate-950/60 border border-slate-200/80 dark:border-slate-850 p-4 rounded-xl">
+                <div className="flex items-center gap-8 bg-slate-50 dark:bg-slate-955/60 border border-slate-200/80 dark:border-slate-850 p-4 rounded-xl">
                   <div className="text-center">
-                    <div className="text-2xl font-black text-emerald-500 dark:text-emerald-400">{averageAproveitamento}%</div>
-                    <div className="text-[9px] uppercase font-bold text-slate-550 tracking-wider">Aproveitamento Médio</div>
+                    <div className="text-2xl font-black text-emerald-500 dark:text-emerald-400">{latestAproveitamento}%</div>
+                    <div className="text-[9px] uppercase font-bold text-slate-550 tracking-wider">Aproveitamento Geral</div>
                   </div>
                   <div className="h-8 w-px bg-slate-850" />
                   <div className="text-center">
@@ -2071,19 +2157,82 @@ export default function DashboardPage() {
                     <div>
                       <h3 className="text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider flex items-center gap-1.5">
                         <Shield size={14} className="text-teal-500 dark:text-teal-400" />
-                        Gerenciamento de Supervisores
+                        Painel de Administração
                       </h3>
-                      <p className="text-[10px] text-slate-600 dark:text-slate-400 mt-0.5">Exclua ou gerencie o acesso dos supervisores cadastrados no sistema.</p>
+                      <p className="text-[10px] text-slate-600 dark:text-slate-400 mt-0.5">Gerencie os supervisores e as configurações gerais da plataforma.</p>
                     </div>
-                    <button
-                      onClick={loadSupervisors}
-                      disabled={isLoadingSupervisors}
-                      className="px-3 py-1.5 bg-slate-50 dark:bg-slate-955 border border-slate-200 dark:border-slate-850 hover:border-slate-300 dark:hover:border-slate-800 text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100 rounded-lg text-xs font-bold transition flex items-center gap-1.5 disabled:opacity-50"
-                    >
-                      <RefreshCw size={12} className={isLoadingSupervisors ? 'animate-spin' : ''} />
-                      Atualizar Lista
-                    </button>
                   </div>
+
+                  {/* SEÇÃO: CONFIGURAÇÃO DO CATÁLOGO UBD */}
+                  <div className="p-4 bg-slate-50 dark:bg-slate-950/20 border border-slate-200 dark:border-slate-850 rounded-xl space-y-4 shadow-inner">
+                    <div>
+                      <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider flex items-center gap-1.5">
+                        <Sliders size={14} className="text-teal-500" />
+                        Configurações do Catálogo UBD
+                      </h4>
+                      <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">Defina o total de aulas e exames do catálogo atual para cálculo do Aproveitamento Geral Absoluto.</p>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Total de Aulas Existentes</label>
+                        <input
+                          type="number"
+                          min="1"
+                          value={catalogTotalAulas}
+                          onChange={(e) => setCatalogTotalAulas(Math.max(1, parseInt(e.target.value) || 1))}
+                          className="w-full px-3 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs font-bold text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-teal-500"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Total de Exames Existentes</label>
+                        <input
+                          type="number"
+                          min="1"
+                          value={catalogTotalExames}
+                          onChange={(e) => setCatalogTotalExames(Math.max(1, parseInt(e.target.value) || 1))}
+                          className="w-full px-3 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs font-bold text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-teal-500"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex justify-end pt-2">
+                      <button
+                        onClick={handleSaveCatalogConfig}
+                        disabled={isSavingConfig}
+                        className="px-4 py-2 bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-500 hover:to-emerald-500 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 shadow disabled:opacity-50 transition cursor-pointer border-none"
+                      >
+                        {isSavingConfig ? (
+                          <>
+                            <RefreshCw className="animate-spin" size={12} />
+                            Salvando...
+                          </>
+                        ) : (
+                          <>
+                            <Save size={12} />
+                            Salvar Catálogo e Atualizar Histórico
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* TABELA DE SUPERVISORES */}
+                  <div className="space-y-4">
+                    <div className="flex justify-between items-center">
+                      <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider flex items-center gap-1.5">
+                        <Users size={14} className="text-teal-500 dark:text-teal-400" />
+                        Gerenciamento de Supervisores
+                      </h4>
+                      <button
+                        onClick={loadSupervisors}
+                        disabled={isLoadingSupervisors}
+                        className="px-3 py-1.5 bg-slate-50 dark:bg-slate-955 border border-slate-200 dark:border-slate-850 hover:border-slate-300 dark:hover:border-slate-800 text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100 rounded-lg text-xs font-bold transition flex items-center gap-1.5 disabled:opacity-50"
+                      >
+                        <RefreshCw size={12} className={isLoadingSupervisors ? 'animate-spin' : ''} />
+                        Atualizar Lista
+                      </button>
+                    </div>
 
                   {isLoadingSupervisors ? (
                     <div className="py-12 flex flex-col items-center justify-center gap-2 text-xs text-slate-500">
@@ -2126,6 +2275,7 @@ export default function DashboardPage() {
                       Nenhum supervisor cadastrado além de você.
                     </div>
                   )}
+                  </div>
                 </div>
               )}
 
