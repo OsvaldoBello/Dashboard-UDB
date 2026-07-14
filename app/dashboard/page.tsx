@@ -95,6 +95,9 @@ export default function DashboardPage() {
   // Estados de Comparação Week-over-Week
   const [compareWeekA, setCompareWeekA] = useState<string>('');
   const [compareWeekB, setCompareWeekB] = useState<string>('');
+  const [comparisonSearch, setComparisonSearch] = useState('');
+  const [comparisonTypeFilter, setComparisonTypeFilter] = useState('Todos');
+  const [comparisonStatusFilter, setComparisonStatusFilter] = useState('Todos');
 
   // Estados do Visualizador de Detalhes da Semana Selecionada
   const [selectedWeeklyReport, setSelectedWeeklyReport] = useState<WeeklyReport | null>(null);
@@ -400,11 +403,11 @@ export default function DashboardPage() {
   };
 
   const handleDownloadComparison = () => {
-    if (comparisonData.length === 0 || !activeRep) return;
+    if (filteredComparisonData.length === 0 || !activeRep) return;
 
     try {
       // 1. Criar dados formatados para a planilha
-      const rows = comparisonData.map(row => ({
+      const rows = filteredComparisonData.map(row => ({
         'Nome do Treinamento / Exame': row.nome,
         'Status (Semana Base)': row.statusA,
         'Progresso (Semana Base)': row.progressoA,
@@ -995,6 +998,38 @@ export default function DashboardPage() {
       };
     });
   }, [compareWeekA, compareWeekB, weeklyReports]);
+
+  // Lista filtrada para o comparador Week-over-Week
+  const filteredComparisonData = useMemo(() => {
+    return comparisonData.filter(item => {
+      // 1. Filtro de busca textual
+      const matchesSearch = item.nome.toLowerCase().includes(comparisonSearch.toLowerCase());
+      
+      // 2. Filtro de tipo (Treinamentos vs Exames)
+      const isExam = item.nome.toLowerCase().endsWith('- exame') || item.nome.toLowerCase().includes('- exame ');
+      let matchesType = true;
+      if (comparisonTypeFilter === 'Treinamentos') {
+        matchesType = !isExam;
+      } else if (comparisonTypeFilter === 'Exames') {
+        matchesType = isExam;
+      }
+      
+      // 3. Filtro de status de avanço
+      let matchesStatus = true;
+      if (comparisonStatusFilter !== 'Todos') {
+        matchesStatus = item.status.toLowerCase().includes(comparisonStatusFilter.toLowerCase());
+      }
+      
+      return matchesSearch && matchesType && matchesStatus;
+    });
+  }, [comparisonData, comparisonSearch, comparisonTypeFilter, comparisonStatusFilter]);
+
+  // Resetar filtros ao mudar de representante ou semanas selecionadas
+  useEffect(() => {
+    setComparisonSearch('');
+    setComparisonTypeFilter('Todos');
+    setComparisonStatusFilter('Todos');
+  }, [selectedRepId, compareWeekA, compareWeekB]);
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col font-sans relative overflow-hidden transition-colors duration-200">
@@ -1801,7 +1836,7 @@ export default function DashboardPage() {
                       </select>
                       <button
                         onClick={handleDownloadComparison}
-                        disabled={comparisonData.length === 0}
+                        disabled={filteredComparisonData.length === 0}
                         className="px-3 py-1.5 bg-gradient-to-r from-blue-600 to-emerald-600 hover:from-blue-500 hover:to-emerald-500 disabled:from-slate-100 disabled:to-slate-100 dark:disabled:from-slate-900/40 dark:disabled:to-slate-900/40 disabled:border-slate-200 dark:disabled:border-slate-800/80 disabled:text-slate-400 dark:disabled:text-slate-600 text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5 shadow-sm dark:shadow-md cursor-pointer disabled:cursor-not-allowed border-none whitespace-nowrap flex-shrink-0"
                         title="Baixar Comparativo em Excel para a Diretoria"
                       >
@@ -1813,43 +1848,115 @@ export default function DashboardPage() {
 
                   {/* RESULTADO COMPARATIVO */}
                   {comparisonData.length > 0 ? (
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-left border-collapse text-xs">
-                        <thead>
-                          <tr className="border-b border-slate-200 dark:border-slate-800 text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider bg-slate-100/50 dark:bg-slate-950/20">
-                            <th className="py-2.5 px-3">Nome do Treinamento / Exame</th>
-                            <th className="py-2.5 px-3 text-center">Semana Base</th>
-                            <th className="py-2.5 px-3 text-center">Semana Foco</th>
-                            <th className="py-2.5 px-3 text-center">Status de Avanço</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-200 dark:divide-slate-900">
-                          {comparisonData.map((row, idx) => (
-                            <tr key={idx} className="hover:bg-slate-50 dark:hover:bg-slate-900/35 transition">
-                              <td className="py-3 px-3 font-semibold text-slate-700 dark:text-slate-200">{row.nome}</td>
-                              <td className="py-3 px-3 text-center">
-                                <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
-                                  row.statusA === 'Concluído' ? 'text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/10' : 'text-orange-700 dark:text-orange-400 bg-orange-50 dark:bg-orange-950/10'
-                                }`}>
-                                  {row.statusA}
-                                </span>
-                              </td>
-                              <td className="py-3 px-3 text-center">
-                                <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
-                                  row.statusB === 'Concluído' ? 'text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/10' : 'text-orange-700 dark:text-orange-400 bg-orange-50 dark:bg-orange-950/10'
-                                }`}>
-                                  {row.statusB}
-                                </span>
-                              </td>
-                              <td className="py-3 px-3 text-center">
-                                <span className={`px-2 py-0.5 rounded-[4px] border text-[9px] font-black uppercase tracking-wider ${row.statusClass}`}>
-                                  {row.status}
-                                </span>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                    <div className="space-y-4">
+                      {/* FILTROS DE AUDITORIA */}
+                      <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 p-3 bg-slate-50 dark:bg-slate-950/40 border border-slate-200/60 dark:border-slate-800/80 rounded-xl">
+                        {/* BUSCA POR TEXTO */}
+                        <div className="sm:col-span-5 relative">
+                          <input
+                            type="text"
+                            placeholder="Buscar por treinamento ou exame..."
+                            value={comparisonSearch}
+                            onChange={(e) => setComparisonSearch(e.target.value)}
+                            className="w-full pl-8 pr-8 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500/50 focus:border-blue-500/50"
+                          />
+                          <span className="absolute left-2.5 top-2.5 text-slate-400 dark:text-slate-500">
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                            </svg>
+                          </span>
+                          {comparisonSearch && (
+                            <button
+                              onClick={() => setComparisonSearch('')}
+                              className="absolute right-2.5 top-2 text-slate-400 dark:text-slate-500 hover:text-slate-650 dark:hover:text-slate-400 cursor-pointer border-none bg-transparent"
+                            >
+                              <X size={12} />
+                            </button>
+                          )}
+                        </div>
+
+                        {/* FILTRO TIPO */}
+                        <div className="sm:col-span-3">
+                          <select
+                            value={comparisonTypeFilter}
+                            onChange={(e) => setComparisonTypeFilter(e.target.value)}
+                            className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs text-slate-700 dark:text-slate-350 focus:outline-none focus:ring-1 focus:ring-blue-500/50 focus:border-blue-500/50 cursor-pointer"
+                          >
+                            <option value="Todos">Todos os Tipos</option>
+                            <option value="Treinamentos">Treinamentos</option>
+                            <option value="Exames">Exames</option>
+                          </select>
+                        </div>
+
+                        {/* FILTRO STATUS */}
+                        <div className="sm:col-span-4 flex items-center justify-between gap-2">
+                          <select
+                            value={comparisonStatusFilter}
+                            onChange={(e) => setComparisonStatusFilter(e.target.value)}
+                            className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs text-slate-700 dark:text-slate-350 focus:outline-none focus:ring-1 focus:ring-blue-500/50 focus:border-blue-500/50 cursor-pointer"
+                          >
+                            <option value="Todos">Todos os Status</option>
+                            <option value="Sem alteração">Sem alteração</option>
+                            <option value="Evoluiu">Evoluiu</option>
+                            <option value="Regrediu">Regrediu</option>
+                            <option value="Novo Curso">Novo Curso</option>
+                            <option value="Removido">Removido</option>
+                          </select>
+                          
+                          <span className="text-[10px] text-slate-500 dark:text-slate-400 font-bold whitespace-nowrap bg-slate-100 dark:bg-slate-900/50 border border-slate-200/40 dark:border-slate-800/40 px-2 py-1 rounded-md">
+                            {filteredComparisonData.length} / {comparisonData.length}
+                          </span>
+                        </div>
+                      </div>
+
+                      {filteredComparisonData.length > 0 ? (
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-left border-collapse text-xs">
+                            <thead>
+                              <tr className="border-b border-slate-200 dark:border-slate-800 text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider bg-slate-100/50 dark:bg-slate-950/20">
+                                <th className="py-2.5 px-3">Nome do Treinamento / Exame</th>
+                                <th className="py-2.5 px-3 text-center">Semana Base</th>
+                                <th className="py-2.5 px-3 text-center">Semana Foco</th>
+                                <th className="py-2.5 px-3 text-center">Status de Avanço</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-200 dark:divide-slate-900">
+                              {filteredComparisonData.map((row, idx) => (
+                                <tr key={idx} className="hover:bg-slate-50 dark:hover:bg-slate-900/35 transition">
+                                  <td className="py-3 px-3 font-semibold text-slate-700 dark:text-slate-200">{row.nome}</td>
+                                  <td className="py-3 px-3 text-center">
+                                    <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
+                                      row.statusA === 'Concluído' ? 'text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/10' : 'text-orange-700 dark:text-orange-400 bg-orange-50 dark:bg-orange-950/10'
+                                    }`}>
+                                      {row.statusA}
+                                    </span>
+                                  </td>
+                                  <td className="py-3 px-3 text-center">
+                                    <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
+                                      row.statusB === 'Concluído' ? 'text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/10' : 'text-orange-700 dark:text-orange-400 bg-orange-50 dark:bg-orange-950/10'
+                                    }`}>
+                                      {row.statusB}
+                                    </span>
+                                  </td>
+                                  <td className="py-3 px-3 text-center">
+                                    <span className={`px-2 py-0.5 rounded-[4px] border text-[9px] font-black uppercase tracking-wider ${row.statusClass}`}>
+                                      {row.status}
+                                    </span>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : (
+                        <div className="py-10 flex flex-col items-center justify-center text-center text-slate-500 text-xs space-y-2 border border-dashed border-slate-200 dark:border-slate-800 rounded-xl">
+                          <Sliders size={24} className="text-slate-400 dark:text-slate-750 animate-pulse" />
+                          <p className="font-bold text-slate-600 dark:text-slate-400">Nenhum Resultado Encontrado</p>
+                          <p className="text-[10px] text-slate-500 max-w-[200px] leading-relaxed">
+                            Ajuste os filtros acima para refinar a auditoria do progresso do representante.
+                          </p>
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <div className="py-12 flex flex-col items-center justify-center text-center text-slate-500 text-xs space-y-2">
