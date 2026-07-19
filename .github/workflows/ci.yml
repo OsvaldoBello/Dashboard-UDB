@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gitleaks:
+    name: Secret scanning
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-and-test:
+    name: Lint, typecheck, test, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        # NÃO bloqueante por ora: eslint-config-next 16 passou a cobrar regras do
+        # React Compiler (react-hooks/preserve-manual-memoization, set-state-in-effect)
+        # como erro. app/dashboard/page.tsx (2500+ linhas) já viola várias — débito D9,
+        # corrigido junto da Fase 5 (refatoração em componentes menores e testados).
+        # Reverter para bloqueante assim que a Fase 5 terminar. Ver MASTER.md.
+        run: npm run lint
+        continue-on-error: true
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+        env:
+          # Placeholders suficientes para o build (o código já trata ausência
+          # de env reais com fallback seguro). Nunca colocar segredos reais aqui.
+          NEXT_PUBLIC_SUPABASE_URL: https://placeholder-ci.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder-anon-key-ci
+          SUPABASE_SERVICE_ROLE_KEY: placeholder-service-key-ci

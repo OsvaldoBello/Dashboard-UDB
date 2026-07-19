@@ -1,20 +1,12 @@
 -- ====================================================================
--- ARQUIVO LEGADO — mantido só como referência histórica.
--- A partir de 2026-07-19, a fonte de verdade do schema é supabase/migrations/.
--- Ver MASTER.md e docs/PLANO-DE-PROJETO.md (Fase 0, item F0.3).
+-- BASELINE: espelho do schema já aplicado manualmente em produção.
+-- Ver docs/PLANO-DE-PROJETO.md (Fase 0, item F0.3) e MASTER.md.
+-- Conteúdo idêntico ao antigo supabase_schema.sql (mantido em supabase_schema.sql
+-- apenas como referência histórica; esta pasta passa a ser a fonte de verdade).
 -- ====================================================================
--- SCRIPT DE MIGRAÇÃO SQL PARA O SUPABASE (SEMANAL, PERFIS & CONTROLE DE ACESSO)
--- ====================================================================
--- Cole este script no Editor de Consultas (SQL Editor) do seu painel Supabase.
 
 -- Habilitar a extensão para geração de UUID se não estiver ativa
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-
--- Limpeza de recursos antigos (opcional, remova se quiser preservar dados existentes)
--- DROP TABLE IF EXISTS public.relatorios_semanais CASCADE;
--- DROP TABLE IF EXISTS public.representantes CASCADE;
--- DROP TABLE IF EXISTS public.perfis CASCADE;
--- DROP TYPE IF EXISTS public.user_role CASCADE;
 
 -- 1. ENUM E TABELA DE PERFIS DE USUÁRIOS (ROLES)
 CREATE TYPE public.user_role AS ENUM ('admin', 'supervisor');
@@ -69,54 +61,57 @@ CREATE INDEX IF NOT EXISTS idx_relatorios_usuario ON public.relatorios_semanais(
 -- ====================================================================
 -- CONFIGURAÇÃO DE SEGURANÇA (ROW LEVEL SECURITY - RLS)
 -- ====================================================================
+-- NOTA (débito D2, endereçado na Fase 2 do projeto): as políticas abaixo são
+-- permissivas (USING (true) para qualquer authenticated). Isso é um espelho
+-- fiel do estado atual de produção, não uma recomendação. Não expandir este
+-- padrão para tabelas novas — ver MASTER.md, Regra de Ouro #10.
 
--- Habilitar RLS nas tabelas
 ALTER TABLE public.perfis ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.representantes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.relatorios_semanais ENABLE ROW LEVEL SECURITY;
 
 -- 4. POLÍTICAS PARA A TABELA PERFIS
-CREATE POLICY "Permitir leitura de perfis para o próprio usuário ou administradores" 
-ON public.perfis FOR SELECT TO authenticated 
+CREATE POLICY "Permitir leitura de perfis para o próprio usuário ou administradores"
+ON public.perfis FOR SELECT TO authenticated
 USING (auth.uid() = id OR EXISTS (SELECT 1 FROM public.perfis WHERE id = auth.uid() AND role = 'admin'));
 
-CREATE POLICY "Permitir atualização do próprio perfil ou por administradores" 
-ON public.perfis FOR UPDATE TO authenticated 
+CREATE POLICY "Permitir atualização do próprio perfil ou por administradores"
+ON public.perfis FOR UPDATE TO authenticated
 USING (auth.uid() = id OR EXISTS (SELECT 1 FROM public.perfis WHERE id = auth.uid() AND role = 'admin'))
 WITH CHECK (auth.uid() = id OR EXISTS (SELECT 1 FROM public.perfis WHERE id = auth.uid() AND role = 'admin'));
 
 -- 5. POLÍTICAS PARA A TABELA REPRESENTANTES
-CREATE POLICY "Permitir leitura de todos os representantes para autenticados" 
-ON public.representantes FOR SELECT TO authenticated 
+CREATE POLICY "Permitir leitura de todos os representantes para autenticados"
+ON public.representantes FOR SELECT TO authenticated
 USING (true);
 
-CREATE POLICY "Permitir inserção de representantes para autenticados" 
-ON public.representantes FOR INSERT TO authenticated 
+CREATE POLICY "Permitir inserção de representantes para autenticados"
+ON public.representantes FOR INSERT TO authenticated
 WITH CHECK (true);
 
-CREATE POLICY "Permitir atualização de todos os representantes para autenticados" 
-ON public.representantes FOR UPDATE TO authenticated 
+CREATE POLICY "Permitir atualização de todos os representantes para autenticados"
+ON public.representantes FOR UPDATE TO authenticated
 USING (true) WITH CHECK (true);
 
-CREATE POLICY "Permitir exclusão de todos os representantes para autenticados" 
-ON public.representantes FOR DELETE TO authenticated 
+CREATE POLICY "Permitir exclusão de todos os representantes para autenticados"
+ON public.representantes FOR DELETE TO authenticated
 USING (true);
 
 -- 6. POLÍTICAS PARA A TABELA RELATÓRIOS SEMANAIS
-CREATE POLICY "Permitir leitura de todos os relatórios para autenticados" 
-ON public.relatorios_semanais FOR SELECT TO authenticated 
+CREATE POLICY "Permitir leitura de todos os relatórios para autenticados"
+ON public.relatorios_semanais FOR SELECT TO authenticated
 USING (true);
 
-CREATE POLICY "Permitir inserção de relatórios para autenticados" 
-ON public.relatorios_semanais FOR INSERT TO authenticated 
+CREATE POLICY "Permitir inserção de relatórios para autenticados"
+ON public.relatorios_semanais FOR INSERT TO authenticated
 WITH CHECK (true);
 
-CREATE POLICY "Permitir atualização de todos os relatórios para autenticados" 
-ON public.relatorios_semanais FOR UPDATE TO authenticated 
+CREATE POLICY "Permitir atualização de todos os relatórios para autenticados"
+ON public.relatorios_semanais FOR UPDATE TO authenticated
 USING (true) WITH CHECK (true);
 
-CREATE POLICY "Permitir exclusão de todos os relatórios para autenticados" 
-ON public.relatorios_semanais FOR DELETE TO authenticated 
+CREATE POLICY "Permitir exclusão de todos os relatórios para autenticados"
+ON public.relatorios_semanais FOR DELETE TO authenticated
 USING (true);
 
 -- ====================================================================
@@ -131,7 +126,7 @@ BEGIN
   VALUES (
     new.id,
     new.email,
-    CASE 
+    CASE
       WHEN new.email = 'admin@bondmann.com.br' THEN 'admin'::public.user_role
       ELSE 'supervisor'::public.user_role
     END
@@ -149,8 +144,8 @@ CREATE OR REPLACE TRIGGER on_auth_user_created
 -- POPULAR USUÁRIOS EXISTENTES (CASO O BANCO JÁ TENHA REGISTROS)
 -- ====================================================================
 INSERT INTO public.perfis (id, email, role)
-SELECT id, email, 
-  CASE 
+SELECT id, email,
+  CASE
     WHEN email = 'admin@bondmann.com.br' THEN 'admin'::public.user_role
     ELSE 'supervisor'::public.user_role
   END

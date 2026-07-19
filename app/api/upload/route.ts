@@ -52,7 +52,7 @@ export async function POST(request: Request) {
     // 3. Sanitização e Validações de Upload (File Upload Security)
     if (file.size > MAX_FILE_SIZE) {
       return NextResponse.json(
-        { error: 'O arquivo excede o limite máximo permitido de 10MB.' },
+        { error: 'O arquivo excede o limite máximo permitido de 50MB.' },
         { status: 400 }
       );
     }
